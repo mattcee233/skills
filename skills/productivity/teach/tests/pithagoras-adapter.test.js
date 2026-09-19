@@ -1,28 +1,30 @@
 'use strict';
-// Tests for the Pithagoras adapter: implements check, prime and send against a stub webhook
-// server according to the adapter contract.
+// Tests for the Pithagoras adapter: implements check, prime and send against a stub `pi`
+// CLI executable (modelled on the real pi CLI) according to the adapter contract.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { makeWorkspace, openTab, HOLDER, get } = require('./helpers');
-const { makeStubPithagoras } = require('./pithagoras-helpers');
+const { makeStubPi } = require('./pithagoras-helpers');
 const { startServer } = require('../bridge/server');
 const { awaitVerdict } = require('./handshake-helpers');
-const { PROFILES, getProfile } = require('../bridge/profiles');
+const { getProfile } = require('../bridge/profiles');
+const {
+  PITHAGORAS_PERMISSIONS_WEB,
+  PITHAGORAS_PERMISSIONS_NO_WEB,
+  WEB_SEARCH_INSTRUCTION,
+  shimCommand,
+} = require('../bridge/adapters/pithagoras');
 
 const ADAPTER_PATH = path.join(__dirname, '..', 'bridge', 'adapters', 'pithagoras.js');
 
-const EXPECTED_PERMISSIONS =
-  "The agent runs with its process's full permissions and has no approval prompts. Web research is not guaranteed and depends on your Pithagoras configuration.";
-
-function runAdapter(workspace, request, options = {}) {
+function runAdapter(workspace, cliString, request, options = {}) {
   return new Promise((resolve, reject) => {
     const args = [ADAPTER_PATH];
-    if (options.url) args.push('--url', options.url);
-    if (options.secret !== undefined) args.push('--secret', options.secret);
+    if (cliString) args.push('--cli', cliString);
     if (options.timeoutMs) args.push('--timeout', String(options.timeoutMs));
-    if (options.ceilingMs) args.push('--ceiling', String(options.ceilingMs));
 
     const child = spawn(process.execPath, args, {
       cwd: workspace.dir,
@@ -42,312 +44,334 @@ function runAdapter(workspace, request, options = {}) {
   });
 }
 
+// The message pi received: everything after the `--` that ends option parsing.
+function messageOf(call) {
+  return call.argv.slice(call.argv.indexOf('--') + 1).join(' ');
+}
+
+function flagValue(call, flag) {
+  const i = call.argv.indexOf(flag);
+  return i === -1 ? undefined : call.argv[i + 1];
+}
+
 // ---------------------------------------------------------------------------
-// Acceptance Criterion 6: Permission text
+// check: package detection and permission text
 // ---------------------------------------------------------------------------
-test('check returns ok and unnarrowed permissions without browser promise', async (t) => {
+test('check without pi-web-access says web research is unavailable', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  const stub = await makeStubPithagoras(t, { secret: 'test-secret' });
+  const stub = makeStubPi(t, { list: { packages: ['npm:pi-subagents'] } });
 
-  const { code, stdout } = await runAdapter(ws, { op: 'check' }, {
-    url: stub.url,
-    secret: 'test-secret',
-  });
+  const { code, stdout } = await runAdapter(ws, stub.cliString, { op: 'check' });
 
   assert.equal(code, 0);
   const response = JSON.parse(stdout.trim());
   assert.equal(response.type, 'result');
   assert.equal(response.ok, true);
-  assert.equal(response.permissions, EXPECTED_PERMISSIONS);
+  assert.equal(response.permissions, PITHAGORAS_PERMISSIONS_NO_WEB);
   assert.match(response.permissions, /full permissions/i);
   assert.match(response.permissions, /no approval prompts/i);
-  assert.doesNotMatch(response.permissions, /browser for research/i);
+  assert.equal(response.hasWebAccess, false);
 });
 
-// ---------------------------------------------------------------------------
-// Acceptance Criterion 3: Error mappings and fixed hints
-// ---------------------------------------------------------------------------
-test('check reports unauthorised with fixed hint when secret is rejected', async (t) => {
+test('check with pi-web-access installed says the agent can search and fetch', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  const stub = await makeStubPithagoras(t, { secret: 'correct-secret' });
+  const stub = makeStubPi(t, { list: { packages: ['npm:pi-web-access', 'npm:pi-subagents'] } });
 
-  const { code, stdout, stderr } = await runAdapter(ws, { op: 'check' }, {
-    url: stub.url,
-    secret: 'wrong-secret',
-  });
+  const { code, stdout } = await runAdapter(ws, stub.cliString, { op: 'check' });
 
   assert.equal(code, 0);
   const response = JSON.parse(stdout.trim());
-  assert.equal(response.type, 'result');
+  assert.equal(response.ok, true);
+  assert.equal(response.permissions, PITHAGORAS_PERMISSIONS_WEB);
+  assert.match(response.permissions, /pi-web-access/);
+  assert.equal(response.hasWebAccess, true);
+
+  // The check uses the real `pi list` command, not an invented subcommand.
+  const calls = stub.calls();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].argv, ['list']);
+});
+
+test('the adapter never reads or writes the global web-search config', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const home = path.join(ws.dir, 'fake-home');
+  fs.mkdirSync(path.join(home, '.pi'), { recursive: true });
+  const configFile = path.join(home, '.pi', 'web-search.json');
+  fs.writeFileSync(configFile, '{"workflow":"auto-summary"}');
+  const before = fs.statSync(configFile).mtimeMs;
+  const stub = makeStubPi(t, { prime: { text: 'ok' } });
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+
+  await runAdapter(ws, stub.cliString, { op: 'check' }, { env });
+  await runAdapter(ws, stub.cliString, { op: 'prime', instruction: 'Read only.' }, { env });
+
+  assert.equal(fs.readFileSync(configFile, 'utf8'), '{"workflow":"auto-summary"}');
+  assert.equal(fs.statSync(configFile).mtimeMs, before);
+});
+
+// ---------------------------------------------------------------------------
+// Error mappings and fixed hints
+// ---------------------------------------------------------------------------
+test('check reports missing when pi executable cannot be found', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const nonExistentCli = JSON.stringify([path.join(ws.dir, 'does-not-exist', 'pi.exe')]);
+
+  const { code, stdout } = await runAdapter(ws, nonExistentCli, { op: 'check' });
+
+  assert.equal(code, 0);
+  const response = JSON.parse(stdout.trim());
   assert.equal(response.ok, false);
-  assert.equal(response.error.code, 'unauthorised');
-  assert.equal(response.error.message, 'Pithagoras credentials were not accepted.');
-  assert.equal(response.error.hint, 'Check your Pithagoras webhook secret, then press Retry.');
-
-  assert.doesNotMatch(stdout, /wrong-secret/);
-  assert.doesNotMatch(stderr, /wrong-secret/);
+  assert.equal(response.error.code, 'missing');
+  assert.equal(response.error.message, 'pi CLI is not installed.');
+  assert.equal(response.error.hint, 'Install the pi CLI and make sure it is on your PATH, then press Retry.');
 });
 
-test('check reports unreachable with fixed hint when endpoint is unreachable', async (t) => {
+test('a failing pi list is a plain failure', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  const deadUrl = 'http://127.0.0.1:59998/';
+  const stub = makeStubPi(t, { list: { exitCode: 1, stderr: 'boom' } });
 
-  const { code, stdout } = await runAdapter(ws, { op: 'check' }, {
-    url: deadUrl,
-    secret: 'some-secret',
-  });
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'check' });
 
-  assert.equal(code, 0);
   const response = JSON.parse(stdout.trim());
-  assert.equal(response.type, 'result');
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'failed');
+});
+
+const PRIME_FAILURES = [
+  {
+    code: 'not-logged-in',
+    turn: { stopReason: 'error', errorMessage: 'No API key found for google. Use /login or set an API key.', text: '' },
+    message: 'pi has no credentials for its model provider.',
+    hint: 'Run pi and use /login, or set your provider API key, then press Retry.',
+  },
+  {
+    code: 'unauthorised',
+    turn: { stopReason: 'error', errorMessage: '401 Unauthorized: Invalid API key', text: '' },
+    message: 'pi credentials were not accepted.',
+    hint: 'Check your pi provider credentials or API key, then press Retry.',
+  },
+  {
+    code: 'unreachable',
+    turn: { stopReason: 'error', errorMessage: 'Connection error: fetch failed', text: '' },
+    message: 'pi could not reach its model provider.',
+    hint: 'Check that your model provider is running and reachable, then press Retry.',
+  },
+];
+
+for (const failureCase of PRIME_FAILURES) {
+  test(`prime maps a model error to ${failureCase.code} with a fixed hint`, async (t) => {
+    const ws = makeWorkspace({});
+    t.after(() => ws.cleanup());
+    const stub = makeStubPi(t, { prime: failureCase.turn });
+
+    const { code, stdout } = await runAdapter(ws, stub.cliString, { op: 'prime', instruction: 'Read only.' });
+
+    assert.equal(code, 0);
+    const response = JSON.parse(stdout.trim());
+    assert.equal(response.type, 'result');
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, failureCase.code);
+    assert.equal(response.error.message, failureCase.message);
+    assert.equal(response.error.hint, failureCase.hint);
+  });
+}
+
+test('a pi process that exits non-zero is classified from its output', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const stub = makeStubPi(t, { send: { exitCode: 1, stderr: 'connect ECONNREFUSED 127.0.0.1:8080' } });
+
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'send', session: 's', text: 'Hello' });
+
+  const response = JSON.parse(stdout.trim());
   assert.equal(response.ok, false);
   assert.equal(response.error.code, 'unreachable');
-  assert.equal(response.error.message, 'Pithagoras could not be reached.');
-  assert.equal(response.error.hint, 'Make sure Pithagoras is running and the webhook URL is reachable, then press Retry.');
 });
 
-test('dropped connection at ceiling yields timeout with fixed hint', async (t) => {
+test('output with no assistant reply is a failure, not an empty success', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  const stub = await makeStubPithagoras(t, {
-    secret: 'test-secret',
-    dropConnection: true,
-  });
+  const stub = makeStubPi(t, { send: { rawOutput: '{"type":"session","id":"x"}\n' } });
 
-  const { code, stdout } = await runAdapter(ws, { op: 'send', session: 'sess-1', text: 'Hello' }, {
-    url: stub.url,
-    secret: 'test-secret',
-    ceilingMs: 100,
-  });
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'send', session: 's', text: 'Hello' });
+
+  const response = JSON.parse(stdout.trim());
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'failed');
+});
+
+test('timeout during turn yields timeout with fixed hint', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const stub = makeStubPi(t, { send: { delayMs: 500, text: 'Too late' } });
+
+  const { code, stdout } = await runAdapter(
+    ws,
+    stub.cliString,
+    { op: 'send', session: 'sess-timeout', text: 'Hello' },
+    { timeoutMs: 50 },
+  );
 
   assert.equal(code, 0);
   const response = JSON.parse(stdout.trim());
-  assert.equal(response.type, 'result');
   assert.equal(response.ok, false);
   assert.equal(response.error.code, 'timeout');
-  assert.equal(response.error.message, 'Pithagoras took too long to reply.');
-  assert.equal(response.error.hint, 'The agent may still be working in the background. Press Try again to retry.');
-});
-
-test('HTTP 500 ceiling message yields timeout with fixed hint', async (t) => {
-  const ws = makeWorkspace({});
-  t.after(() => ws.cleanup());
-  const stub = await makeStubPithagoras(t, {
-    secret: 'test-secret',
-    status: 500,
-    body: { error: 'The agent did not finish within 900s' },
-  });
-
-  const { code, stdout } = await runAdapter(ws, { op: 'send', session: 'sess-1', text: 'Slow turn' }, {
-    url: stub.url,
-    secret: 'test-secret',
-  });
-
-  assert.equal(code, 0);
-  const response = JSON.parse(stdout.trim());
-  assert.equal(response.type, 'result');
-  assert.equal(response.ok, false);
-  assert.equal(response.error.code, 'timeout');
-  assert.equal(response.error.message, 'Pithagoras took too long to reply.');
+  assert.equal(response.error.message, 'pi took too long to reply.');
   assert.equal(response.error.hint, 'The agent may still be working in the background. Press Try again to retry.');
 });
 
 // ---------------------------------------------------------------------------
-// Acceptance Criterion 2: Bare stop words wrapped and never raw
+// Web search workflow: none, per call, no global config change
 // ---------------------------------------------------------------------------
-test('a message that is only stop, wait or cancel reaches the stub wrapped and never raw', async (t) => {
+test('every turn tells the agent to search with workflow none', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  const stub = await makeStubPithagoras(t, { secret: 'test-secret' });
+  const stub = makeStubPi(t, { prime: { text: 'Ready.' }, send: { text: 'An answer.' } });
 
-  const testCases = [
-    { input: 'stop', expectedContains: 'The learner says: "stop"' },
-    { input: 'WAIT', expectedContains: 'The learner says: "WAIT"' },
-    { input: ' cancel! ', expectedContains: 'The learner says: "cancel!"' },
-    { input: 'abort.', expectedContains: 'The learner says: "abort."' },
-    { input: 'halt', expectedContains: 'The learner says: "halt"' },
-    { input: 'hold on', expectedContains: 'The learner says: "hold on"' },
-    { input: 'nevermind', expectedContains: 'The learner says: "nevermind"' },
-    {
-      input: '[sent from lessons/0001-intro.html]\nstop',
-      expectedContains: '[sent from lessons/0001-intro.html]\nThe learner says: "stop"',
-    },
-  ];
+  await runAdapter(ws, stub.cliString, { op: 'prime', instruction: 'Read only.' });
+  await runAdapter(ws, stub.cliString, { op: 'send', session: 'sess-1', text: 'Why?' });
 
-  for (const tc of testCases) {
-    stub.clearCalls();
-    const { code, stdout } = await runAdapter(ws, {
-      op: 'send',
-      session: 'sess-stop',
-      text: tc.input,
-    }, {
-      url: stub.url,
-      secret: 'test-secret',
-    });
-
-    assert.equal(code, 0);
-    const response = JSON.parse(stdout.trim());
-    assert.equal(response.type, 'result');
-    assert.equal(response.ok, true);
-
-    const calls = stub.calls();
-    assert.equal(calls.length, 1);
-    const receivedMessage = calls[0].body.message;
-    // Must never be raw stop word
-    assert.notEqual(receivedMessage.trim().toLowerCase(), tc.input.trim().toLowerCase());
-    assert.ok(
-      receivedMessage.includes(tc.expectedContains),
-      `Expected message "${receivedMessage}" to include "${tc.expectedContains}"`
-    );
+  const calls = stub.calls();
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(flagValue(call, '--append-system-prompt'), WEB_SEARCH_INSTRUCTION);
   }
-
-  // Verify non-stop words are passed through without wrapping
-  stub.clearCalls();
-  await runAdapter(ws, {
-    op: 'send',
-    session: 'sess-normal',
-    text: 'How do loops work in Python?',
-  }, {
-    url: stub.url,
-    secret: 'test-secret',
-  });
-  const normalCalls = stub.calls();
-  assert.equal(normalCalls.length, 1);
-  assert.equal(normalCalls[0].body.message, 'How do loops work in Python?');
+  assert.match(WEB_SEARCH_INSTRUCTION, /workflow: "none"/);
+  assert.match(WEB_SEARCH_INSTRUCTION, /straight back/);
 });
 
 // ---------------------------------------------------------------------------
-// Acceptance Criterion 4: HTTP 200 refusal text detection
+// Replies come from the real JSON event stream
 // ---------------------------------------------------------------------------
-test('a refusal returned as an HTTP 200 with refusal text is not treated as a successful reply', async (t) => {
+test('the reply is the text of the last assistant message, not the thinking or raw events', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
+  const stub = makeStubPi(t, { send: { text: 'Loops repeat work.' } });
 
-  const refusalCases = [
-    { refusal: true, description: 'stranger refusal' },
-    { stopped: true, description: 'Stopped.' },
-    { reply: 'Nothing running.', description: 'Nothing running.' },
-  ];
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'send', session: 's', text: 'What is a loop?' });
 
-  for (const rc of refusalCases) {
-    const stub = await makeStubPithagoras(t, {
-      secret: 'test-secret',
-      ...rc,
-    });
-
-    const { code, stdout } = await runAdapter(ws, {
-      op: 'send',
-      session: 'sess-refusal',
-      text: 'Hello teacher',
-    }, {
-      url: stub.url,
-      secret: 'test-secret',
-    });
-
-    assert.equal(code, 0);
-    const response = JSON.parse(stdout.trim());
-    assert.equal(response.type, 'result');
-    assert.equal(response.ok, false, `Expected ${rc.description} not to be treated as successful`);
-    assert.ok(['unauthorised', 'failed'].includes(response.error.code));
-    assert.ok(response.error.hint);
-  }
+  const response = JSON.parse(stdout.trim());
+  assert.equal(response.ok, true);
+  assert.equal(response.text, 'Loops repeat work.');
 });
 
 // ---------------------------------------------------------------------------
-// Acceptance Criterion 5: Secret protection in all outputs
+// Learner text reaches pi as one message argument
 // ---------------------------------------------------------------------------
-test('the secret appears in no log, message, hint or result', async (t) => {
+test('learner text is passed after -- so leading dashes are not read as flags', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  const superSecret = 'SUPER_SECRET_TOKEN_XYZ_999';
-  const stub = await makeStubPithagoras(t, {
-    secret: superSecret,
-    reply: `Here is your reply which echoes ${superSecret} in text`,
-  });
+  const stub = makeStubPi(t, { send: { text: 'Explained.' } });
 
-  // Test check
-  const checkRes = await runAdapter(ws, { op: 'check' }, {
-    url: stub.url,
-    secret: superSecret,
-  });
-  assert.doesNotMatch(checkRes.stdout, new RegExp(superSecret));
-  assert.doesNotMatch(checkRes.stderr, new RegExp(superSecret));
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'send', session: 's', text: '--help me with loops' });
 
-  // Test send with echo
-  const sendRes = await runAdapter(ws, {
-    op: 'send',
-    session: 'sess-secret',
-    text: 'Hello',
-  }, {
-    url: stub.url,
-    secret: superSecret,
-  });
-  assert.doesNotMatch(sendRes.stdout, new RegExp(superSecret));
-  assert.doesNotMatch(sendRes.stderr, new RegExp(superSecret));
+  assert.equal(JSON.parse(stdout.trim()).ok, true);
+  assert.equal(messageOf(stub.calls()[0]), '--help me with loops');
+});
 
-  // Test error case
-  const errRes = await runAdapter(ws, { op: 'check' }, {
-    url: stub.url,
-    secret: 'wrong-token-for-test',
-  });
-  assert.doesNotMatch(errRes.stdout, new RegExp(superSecret));
-  assert.doesNotMatch(errRes.stderr, new RegExp(superSecret));
+test('learner text starting with @ is not left to be read as a file', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const stub = makeStubPi(t, { send: { text: 'Explained.' } });
+
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'send', session: 's', text: '@teacher what is a loop?' });
+
+  assert.equal(JSON.parse(stdout.trim()).ok, true);
+  const message = messageOf(stub.calls()[0]);
+  assert.ok(!message.startsWith('@'), `message must not start with @: ${message}`);
+  assert.ok(message.includes('@teacher what is a loop?'));
+});
+
+test('a bare stop word is an ordinary message to the pi CLI', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const stub = makeStubPi(t, { send: { text: 'Okay.' } });
+
+  const { stdout } = await runAdapter(ws, stub.cliString, { op: 'send', session: 's', text: 'stop' });
+
+  assert.equal(JSON.parse(stdout.trim()).ok, true);
+  assert.equal(messageOf(stub.calls()[0]), 'stop');
 });
 
 // ---------------------------------------------------------------------------
-// Prime operation tests
+// Prime and send operations
 // ---------------------------------------------------------------------------
-test('prime generates session id and sends instruction to stub webhook', async (t) => {
+test('prime generates session id, runs from workspace, and passes instruction as one arg', async (t) => {
   const ws = makeWorkspace({
     'MISSION.md': 'Learn Python.',
     'lessons/0001-intro.html': '<h1>Intro</h1>',
   });
   t.after(() => ws.cleanup());
-  const stub = await makeStubPithagoras(t, {
-    secret: 'test-secret',
-    reply: 'Ready to teach.',
-  });
+  const stub = makeStubPi(t, { prime: { text: 'Ready to teach.' } });
 
   const instruction = 'You are the teacher for this workspace. Read only.';
-  const { code, stdout } = await runAdapter(ws, {
+  const { code, stdout } = await runAdapter(ws, stub.cliString, {
     op: 'prime',
     lesson: 'lessons/0001-intro.html',
     instruction,
-  }, {
-    url: stub.url,
-    secret: 'test-secret',
   });
 
   assert.equal(code, 0);
   const response = JSON.parse(stdout.trim());
-  assert.equal(response.type, 'result');
   assert.equal(response.ok, true);
-  assert.ok(response.session, 'returns session');
-  assert.ok(typeof response.session === 'string');
+  assert.ok(typeof response.session === 'string' && response.session);
 
   const calls = stub.calls();
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].body.message, instruction);
-  assert.equal(calls[0].body.session, response.session);
+  const call = calls[0];
+  assert.equal(call.cwd, ws.dir);
+  assert.ok(call.argv.includes('-p'));
+  assert.equal(flagValue(call, '--mode'), 'json');
+  assert.equal(messageOf(call), instruction);
+  assert.equal(flagValue(call, '--session-id'), response.session);
+});
+
+test('send resumes session, runs from workspace, and passes text as one arg', async (t) => {
+  const ws = makeWorkspace({
+    'MISSION.md': 'Learn Python.',
+    'lessons/0001-intro.html': '<h1>Intro</h1>',
+  });
+  t.after(() => ws.cleanup());
+  const stub = makeStubPi(t, { send: { text: 'Python is a high-level language.' } });
+
+  const { code, stdout } = await runAdapter(ws, stub.cliString, {
+    op: 'send',
+    session: 'sess-abc-123',
+    lesson: 'lessons/0001-intro.html',
+    text: 'What is Python?',
+  });
+
+  assert.equal(code, 0);
+  const response = JSON.parse(stdout.trim());
+  assert.equal(response.ok, true);
+  assert.equal(response.text, 'Python is a high-level language.');
+
+  const calls = stub.calls();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cwd, ws.dir);
+  assert.equal(messageOf(calls[0]), 'What is Python?');
+  assert.equal(flagValue(calls[0], '--session-id'), 'sess-abc-123');
 });
 
 // ---------------------------------------------------------------------------
-// Acceptance Criterion 1: Conformance runner integration
+// Conformance runner integration
 // ---------------------------------------------------------------------------
-test('adapter passes the conformance runner against the stub webhook', async (t) => {
+test('adapter passes the conformance runner against the stub CLI', async (t) => {
   const ws = makeWorkspace({
     'MISSION.md': 'Learn Python.',
     'lessons/0001-intro.html': '<!doctype html><html><body><h1>Intro</h1></body></html>',
   });
-  const stub = await makeStubPithagoras(t, {
-    secret: 'test-secret',
-    reply: 'Understood and ready.',
+  const stub = makeStubPi(t, {
+    prime: { text: 'Understood and ready.' },
+    send: { text: 'Python is an interpreted programming language.' },
   });
 
-  const adapterCmd = [process.execPath, ADAPTER_PATH, '--url', stub.url, '--secret', 'test-secret'];
+  const adapterCmd = [process.execPath, ADAPTER_PATH, '--cli', stub.cliString];
   const server = await startServer({
     workspace: ws.dir,
     bind: { mode: 'loopback' },
@@ -362,10 +386,9 @@ test('adapter passes the conformance runner against the stub webhook', async (t)
 
   const state = await awaitVerdict(server);
   assert.equal(state.state, 'interactive');
-  assert.equal(state.permissions, EXPECTED_PERMISSIONS);
+  assert.equal(state.permissions, PITHAGORAS_PERMISSIONS_WEB);
 
   // Verify chat send works through the server
-  stub.setConfig({ reply: 'Python is a high-level language.' });
   const sendRes = await fetch(`http://127.0.0.1:${server.port}/send`, {
     method: 'POST',
     headers: {
@@ -389,19 +412,23 @@ test('adapter passes the conformance runner against the stub webhook', async (t)
   }
   assert.ok(reply, 'received reply');
   assert.equal(reply.result.ok, true);
-  assert.equal(reply.result.text, 'Python is a high-level language.');
+  assert.equal(reply.result.text, 'Python is an interpreted programming language.');
 });
 
-test('conformance check transitions to static with fixed hint when secret is wrong', async (t) => {
+test('conformance check transitions to static with the login hint when the prime turn shows no credentials', async (t) => {
   const ws = makeWorkspace({
     'MISSION.md': 'Learn Python.',
     'lessons/0001-intro.html': '<!doctype html><html><body><h1>Intro</h1></body></html>',
   });
-  const stub = await makeStubPithagoras(t, {
-    secret: 'correct-secret',
+  const stub = makeStubPi(t, {
+    prime: {
+      stopReason: 'error',
+      errorMessage: 'No API key found for google. Use /login or set an API key.',
+      text: '',
+    },
   });
 
-  const adapterCmd = [process.execPath, ADAPTER_PATH, '--url', stub.url, '--secret', 'wrong-secret'];
+  const adapterCmd = [process.execPath, ADAPTER_PATH, '--cli', stub.cliString];
   const server = await startServer({
     workspace: ws.dir,
     bind: { mode: 'loopback' },
@@ -416,21 +443,55 @@ test('conformance check transitions to static with fixed hint when secret is wro
 
   const state = await awaitVerdict(server);
   assert.equal(state.state, 'static');
-  assert.equal(state.reason, 'unauthorised');
-  assert.equal(state.message, 'Pithagoras credentials were not accepted.');
-  assert.equal(state.hint, 'Check your Pithagoras webhook secret, then press Retry.');
+  assert.equal(state.reason, 'not-logged-in');
+  assert.equal(state.message, 'pi has no credentials for its model provider.');
+  assert.equal(state.hint, 'Run pi and use /login, or set your provider API key, then press Retry.');
 });
 
 // ---------------------------------------------------------------------------
-// Acceptance Criterion 7: Profile table entry
+// Profile table entry
 // ---------------------------------------------------------------------------
-test('profile table gains the pithagoras entry (adapter, remote)', () => {
+test('profile table gains the pithagoras entry (adapter, remote: false, cli: pi)', () => {
   const profile = getProfile('pithagoras');
   assert.ok(profile, 'profile exists for pithagoras');
   assert.equal(profile.id, 'pithagoras');
-  assert.equal(profile.remote, true);
+  assert.equal(profile.remote, false);
+  assert.equal(profile.cli, 'pi');
+  assert.ok(profile.installHint);
+  assert.ok(profile.loginHint);
 
   assert.ok(Array.isArray(profile.adapter), 'adapter is a command array');
   assert.equal(profile.adapter[0], process.execPath);
   assert.equal(path.resolve(profile.adapter[1]), path.resolve(ADAPTER_PATH));
+});
+
+// ---------------------------------------------------------------------------
+// Windows npm shim: Node cannot spawn a .cmd without a shell
+// ---------------------------------------------------------------------------
+test('a Windows npm .cmd shim resolves to the node script it runs', (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const script = path.join(ws.dir, 'node_modules', 'pkg', 'dist', 'cli.js');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.writeFileSync(script, '');
+  const shim = path.join(ws.dir, 'pi.cmd');
+  fs.writeFileSync(
+    shim,
+    '@ECHO off\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\pkg\\dist\\cli.js" %*\r\n',
+  );
+
+  assert.deepEqual(shimCommand(shim), [process.execPath, script]);
+});
+
+test('a shim that names a missing script, or no script, resolves to nothing', (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const missing = path.join(ws.dir, 'missing.cmd');
+  fs.writeFileSync(missing, '"%_prog%"  "%dp0%\\node_modules\\gone\\cli.js" %*\r\n');
+  const plain = path.join(ws.dir, 'plain.cmd');
+  fs.writeFileSync(plain, '@ECHO off\r\necho hi\r\n');
+
+  assert.equal(shimCommand(missing), null);
+  assert.equal(shimCommand(plain), null);
+  assert.equal(shimCommand(path.join(ws.dir, 'absent.cmd')), null);
 });
