@@ -17,6 +17,21 @@ const PROFILES = {
     installHint: 'Install Claude Code and make sure it is on your PATH, then press Retry.',
     loginHint: 'Run "claude auth login" in your terminal, or "/login" inside Claude Code, then press Retry.',
   },
+  antigravity: {
+    id: 'antigravity',
+    adapter: [process.execPath, path.join(__dirname, 'adapters', 'agy.js')],
+    remote: false,
+    cli: 'agy',
+    installHint:
+      'Install the Antigravity CLI (agy) and restart your application, or check the known install folder (%LOCALAPPDATA%\\agy\\bin or ~/.local/bin), then press Retry.',
+    loginHint: 'Start agy and run /login, then press Retry.',
+  },
+  pithagoras: {
+    id: 'pithagoras',
+    adapter: [process.execPath, path.join(__dirname, 'adapters', 'pithagoras.js')],
+    remote: true,
+    installHints: 'Ensure Pithagoras is running with a webhook channel configured.',
+  },
 };
 
 function getProfile(id) {
