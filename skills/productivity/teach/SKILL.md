@@ -16,7 +16,7 @@ Treat the current directory as a teaching workspace. The state of their learning
 - `IMPROVISED-ADAPTERS.md`: Guide for creating custom connectors when running in an unrecognised harness. See [IMPROVISED-ADAPTERS.md](./IMPROVISED-ADAPTERS.md).
 - `RESOURCES.md`: A list of resources which can be explored to ground your teaching in contextual knowledge, or to acquire knowledge and wisdom. Use the format in [RESOURCES-FORMAT.md](./RESOURCES-FORMAT.md).
 - `./learning-records/*.md`: A directory of learning records, which capture what the user has learned. These are loosely equivalent to architectural decision records in software development - they capture non-obvious lessons and key insights that may need to be revised later, or drive future sessions. These should be used to calculate the zone of proximal development. They are titled `0001-<dash-case-name>.md`, where the number increments each time. Use the format in [LEARNING-RECORD-FORMAT.md](./LEARNING-RECORD-FORMAT.md).
-- `./lessons/*.html`: A directory of lessons. A **lesson** is a single, self-contained HTML output that teaches one tightly-scoped thing tied to the mission. This is the primary unit of teaching in this workspace.
+- `./lessons/*.html`: A directory of lessons. A **lesson** is a single, self-contained HTML output that teaches one tightly-scoped thing tied to the mission. This is the primary unit of teaching in this workspace. Use the format and hooks in [LESSON-FORMAT.md](./LESSON-FORMAT.md).
 - `./assets/*`: Reusable **components** shared across lessons. See [Assets](#assets).
 - `.teach/*`: Machine-local configuration, launcher, and state for interactive mode. Self-ignored by `.teach/.gitignore`. See [INTERACTIVE-SETUP.md](./INTERACTIVE-SETUP.md).
 - `NOTES.md`: A scratchpad for you to jot down user preferences, or working notes.
@@ -48,7 +48,7 @@ Fluency can give the user an illusory sense of mastery, but storage strength is 
 
 ## Lessons
 
-A lesson is the main thing you produce: the unit in which knowledge and skills reach the user. Each lesson is one self-contained HTML file, saved to `./lessons/` and titled `0001-<dash-case-name>.html` where the number increments each time.
+A lesson is the main thing you produce: the unit in which knowledge and skills reach the user. Each lesson is one self-contained HTML file, saved to `./lessons/` and titled `0001-<dash-case-name>.html` where the number increments each time. Use the template and guidance in [LESSON-FORMAT.md](./LESSON-FORMAT.md).
 
 A lesson should be **beautiful**, with clean, readable typography and layout, since the user will return to these later to review. Think Tufte.
 
@@ -60,7 +60,19 @@ Each lesson should link via HTML anchors to other lessons and reference document
 
 Each lesson should recommend a primary source for the user to read or watch. This should be the most high-quality, high-trust resource you found on the topic.
 
-Each lesson should contain a reminder to ask followup questions to the agent. The agent is their teacher, and can assist with anything that's unclear.
+Each lesson must contain the follow-up reminder worded to be true in every tier:
+> "Ask in the chat panel if you see one, or ask me in this conversation."
+
+Lessons follow the quiz markup hook from [QUIZ-FORMAT.md](./QUIZ-FORMAT.md) and carry the stable next-lesson hook (`[data-teach-next]`) on disk, opening cleanly as plain files.
+
+### Updating and Signalling
+
+- **Update lessons in place**: Always update the lesson file on disk directly. Never tag files with revisions (e.g. `0001-loops-v2.html`).
+- **Write the file first, signal second**: The disk is the single source of truth. Always write the completed HTML file to disk before sending any signal.
+- **The two events**:
+  - `reload`: Signal when you revise or update the current lesson on disk (`node .teach/signal.js reload lessons/<file>.html`).
+  - `next-lesson`: When you create the next lesson, first add/update the next-lesson button on disk in the current lesson, write the new lesson file, and then signal `next-lesson` (`node .teach/signal.js next-lesson lessons/<file>.html "<title>"`).
+- If `.teach/signal.js` is missing, do not signal; write the lesson as usual and note that the learner can run `/teach interactive` to set up interactive mode. See [INTERACTIVE-SETUP.md](./INTERACTIVE-SETUP.md).
 
 ## Assets
 
