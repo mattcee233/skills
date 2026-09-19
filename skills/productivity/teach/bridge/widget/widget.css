@@ -523,3 +523,34 @@ a.teach-next {
 .teach-input:disabled {
   opacity: 0.6;
 }
+
+/* ---- Quiz feedback -------------------------------------------------------------------------
+   Minimal styling for feedback shown by quiz questions following the markup hook. */
+.fb,
+[data-quiz-feedback] {
+  margin: 0.4rem 0 0;
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+.fb.ok,
+[data-quiz-feedback].ok {
+  color: #1f7a3d;
+}
+
+.fb.no,
+[data-quiz-feedback].no {
+  color: #a33a2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  .fb.ok,
+  [data-quiz-feedback].ok {
+    color: #4ade80;
+  }
+  .fb.no,
+  [data-quiz-feedback].no {
+    color: #f87171;
+  }
+}
+

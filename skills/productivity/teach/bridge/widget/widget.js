@@ -1142,8 +1142,210 @@
     });
   }
 
+  // ---- Quiz persistence and markup hook ------------------------------------------------
+  // A learner's quiz answers survive reloads and lesson revisions. The state is stored
+  // per lesson in localStorage as { [questionId]: { selected, checked } }.
+  // Minimal markup hook:
+  //   Container: [data-quiz-question] or .quiz-q (optional id in data-quiz-question or data-i)
+  //   Inputs:    input[type=radio]
+  //   Check:     [data-quiz-check] or [data-check] or button inside the question
+  //   Feedback:  [data-quiz-feedback] or .fb
+  // Correctness can be marked on the container (data-correct="val") or on the input (data-correct).
+  var QUIZ_KEY_PREFIX = 'teach.quiz:';
+
+  function quizKey() {
+    return QUIZ_KEY_PREFIX + location.pathname;
+  }
+
+  function loadQuizStorage() {
+    try {
+      var raw = localStorage.getItem(quizKey());
+      return raw ? JSON.parse(raw) : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function saveQuizStorage(state) {
+    try {
+      localStorage.setItem(quizKey(), JSON.stringify(state));
+    } catch (err) {
+      // Storage full or disabled: degrades to no persistence without errors.
+    }
+  }
+
+  function questionIdOf(q, index) {
+    if (!q) return String(index || 0);
+    var attr = q.getAttribute('data-quiz-question');
+    if (attr) return attr;
+    var dataI = q.getAttribute('data-i');
+    if (dataI) return dataI;
+    var firstRadio = q.querySelector('input[type="radio"]');
+    if (firstRadio && firstRadio.name) return firstRadio.name;
+    return String(index || 0);
+  }
+
+  function findQuestion(target) {
+    if (!target) return null;
+    if (target.closest) {
+      return target.closest('[data-quiz-question], .quiz-q');
+    }
+    var curr = target;
+    while (curr) {
+      if (curr.getAttribute && (curr.hasAttribute('data-quiz-question') || (curr.className && curr.className.indexOf('quiz-q') !== -1))) {
+        return curr;
+      }
+      curr = curr.parentNode;
+    }
+    return null;
+  }
+
+  function getRadioInputs(q) {
+    return Array.prototype.slice.call(q.querySelectorAll('input[type="radio"]'));
+  }
+
+  function getSelectedRadio(q) {
+    var radios = getRadioInputs(q);
+    for (var i = 0; i < radios.length; i++) {
+      if (radios[i].checked) return radios[i];
+    }
+    return null;
+  }
+
+  function isOptionCorrect(q, input) {
+    if (!input) return false;
+    var containerCorrect = q.getAttribute('data-correct') || q.getAttribute('data-quiz-correct');
+    if (containerCorrect !== null) {
+      return input.value === containerCorrect;
+    }
+    return (
+      input.hasAttribute('data-correct') ||
+      input.hasAttribute('data-quiz-correct') ||
+      input.getAttribute('data-correct') === 'true'
+    );
+  }
+
+  function getFeedbackElement(q) {
+    var fb = q.querySelector('[data-quiz-feedback], .fb');
+    if (!fb) {
+      fb = document.createElement('p');
+      fb.className = 'fb';
+      fb.setAttribute('data-quiz-feedback', '');
+      var btn = q.querySelector('[data-quiz-check], [data-check], button');
+      if (btn && btn.parentNode) {
+        btn.parentNode.insertBefore(fb, btn.nextSibling);
+      } else {
+        q.appendChild(fb);
+      }
+    }
+    return fb;
+  }
+
+  function setFeedback(q, selectedInput) {
+    var fb = getFeedbackElement(q);
+    if (!selectedInput) {
+      fb.textContent = 'Pick an answer first.';
+      fb.className = 'fb';
+      return;
+    }
+    var ok = isOptionCorrect(q, selectedInput);
+    var customMsg =
+      selectedInput.getAttribute('data-feedback') ||
+      (ok ? q.getAttribute('data-feedback-correct') : q.getAttribute('data-feedback-incorrect'));
+
+    fb.textContent = customMsg || (ok ? 'Correct.' : 'Not quite: have another look.');
+    fb.className = 'fb ' + (ok ? 'ok' : 'no');
+  }
+
+  function clearFeedback(q) {
+    var fb = q.querySelector('[data-quiz-feedback], .fb');
+    if (fb) {
+      fb.textContent = '';
+      fb.className = 'fb';
+    }
+  }
+
+  function restoreQuiz(doc) {
+    if (!doc) doc = document;
+    var storage = loadQuizStorage();
+    var questions = doc.querySelectorAll('[data-quiz-question], .quiz-q');
+    Array.prototype.forEach.call(questions, function (q, index) {
+      var id = questionIdOf(q, index);
+      var state = storage[id];
+      if (!state) return;
+
+      var radios = getRadioInputs(q);
+      var matchingRadio = null;
+      radios.forEach(function (r) {
+        if (state.selected && r.value === state.selected) {
+          r.checked = true;
+          matchingRadio = r;
+        } else {
+          r.checked = false;
+        }
+      });
+
+      if (state.checked) {
+        setFeedback(q, matchingRadio);
+      } else {
+        clearFeedback(q);
+      }
+    });
+  }
+
+  function startQuizPersistence() {
+    restoreQuiz(document);
+
+    document.addEventListener('change', function (e) {
+      var target = e.target;
+      if (!target || target.type !== 'radio') return;
+      var q = findQuestion(target);
+      if (!q) return;
+
+      var allQuestions = document.querySelectorAll('[data-quiz-question], .quiz-q');
+      var index = Array.prototype.indexOf.call(allQuestions, q);
+      var id = questionIdOf(q, index);
+
+      var storage = loadQuizStorage();
+      storage[id] = { selected: target.value, checked: false };
+      saveQuizStorage(storage);
+      clearFeedback(q);
+    });
+
+    document.addEventListener('click', function (e) {
+      var target = e.target;
+      if (!target) return;
+      var btn = target.closest
+        ? target.closest('[data-quiz-check], [data-check], button')
+        : (target.tagName === 'BUTTON' ? target : null);
+      if (!btn) return;
+      if (btn.closest && btn.closest('#teach-widget')) return;
+
+      var q = findQuestion(btn);
+      if (!q) return;
+
+      var allQuestions = document.querySelectorAll('[data-quiz-question], .quiz-q');
+      var index = Array.prototype.indexOf.call(allQuestions, q);
+      var id = questionIdOf(q, index);
+
+      var selected = getSelectedRadio(q);
+      setFeedback(q, selected);
+
+      if (selected) {
+        var storage = loadQuizStorage();
+        storage[id] = { selected: selected.value, checked: true };
+        saveQuizStorage(storage);
+      }
+    });
+
+    document.addEventListener('teach:lesson-updated', function () {
+      restoreQuiz(document);
+    });
+  }
+
   function start() {
     takeTokenFromUrl();
+    startQuizPersistence();
     var root = document.createElement('div');
     root.id = 'teach-widget';
     document.body.appendChild(root);
@@ -1162,4 +1364,14 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      restoreQuiz: restoreQuiz,
+      startQuizPersistence: startQuizPersistence,
+      loadQuizStorage: loadQuizStorage,
+      saveQuizStorage: saveQuizStorage,
+      questionIdOf: questionIdOf,
+    };
+  }
 })();
