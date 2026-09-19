@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { post, get } = require('./helpers');
-const { reply, withChat, sendMessage, awaitReply } = require('./chat-helpers');
+const { HOLDER, reply, withChat, sendMessage, awaitReply } = require('./chat-helpers');
 
 test('a message from the page reaches the adapter after one "sent from" line, and the reply comes back', async (t) => {
   const { server, adapter } = await withChat(t, { send: reply('Loops repeat things.') });
@@ -82,11 +82,11 @@ test('a malformed message is refused with a 400 and never reaches the adapter', 
 
   const notJson = await fetch(`http://127.0.0.1:${server.port}/send`, {
     method: 'POST',
-    headers: { 'X-Teach-Token': server.token },
+    headers: { 'X-Teach-Token': server.token, 'X-Teach-Tab': HOLDER },
     body: '{not json',
   });
   assert.equal(notJson.status, 400);
-  const notObject = await post(server, '/send', ['a']);
+  const notObject = await post(server, '/send', ['a'], server.token, HOLDER);
   assert.equal(notObject.status, 400);
 
   assert.equal(adapter.calls().length, 0);
@@ -131,7 +131,7 @@ async function awaitReplyAfterSend(server) {
 
 test('a request body over the cap is refused with a 413 the client can read', async (t) => {
   const { server } = await withChat(t, { send: reply('ok') });
-  const res = await post(server, '/send', { id: 'big', lesson: '/lessons/0001-loops.html', text: 'x'.repeat(200 * 1024) });
+  const res = await post(server, '/send', { id: 'big', lesson: '/lessons/0001-loops.html', text: 'x'.repeat(200 * 1024) }, server.token, HOLDER);
   assert.equal(res.status, 413);
   assert.equal((await res.json()).error.code, 'failed');
 });

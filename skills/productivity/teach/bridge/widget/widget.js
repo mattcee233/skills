@@ -3,6 +3,8 @@
 
   var TOKEN_KEY = 'teach.token';
   var THREAD_KEY = 'teach.thread';
+  var TAB_KEY = 'teach.tab';
+  var DUPLICATE_CHECK_MS = 250;
   var POLL_MS = 1500;
   var POLL_FAILURES_BEFORE_GIVING_UP = 5;
   var HINT_AFTER_SECONDS = [
@@ -57,6 +59,61 @@
     }
   }
 
+  // ---- Which tab this is ----------------------------------------------------------------------
+  // Each tab has an id in sessionStorage, which survives moving from lesson to lesson in the same
+  // tab. A duplicated tab copies sessionStorage, so it would share the original's id. On load a tab
+  // asks the others on a BroadcastChannel whether anyone already has its id, and takes a fresh one
+  // if so. A page that is being left does not answer, or the next page of the same tab would think
+  // it was a copy.
+  function readTabId() {
+    try {
+      return sessionStorage.getItem(TAB_KEY);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveTabId(id) {
+    try {
+      sessionStorage.setItem(TAB_KEY, id);
+    } catch (err) {
+      // No session storage: the id lasts for this page only.
+    }
+  }
+
+  function resolveTabId(done) {
+    var id = readTabId() || newId();
+    saveTabId(id);
+    if (typeof BroadcastChannel === 'undefined') return done(id);
+    var channel = new BroadcastChannel('teach-tabs');
+    var nonce = newId();
+    var leaving = false;
+    var settled = false;
+    channel.onmessage = function (event) {
+      var message = event.data || {};
+      if (message.type === 'hello' && message.id === id && message.nonce !== nonce && !leaving) {
+        channel.postMessage({ type: 'have', id: id, to: message.nonce });
+      } else if (message.type === 'have' && message.to === nonce && !settled) {
+        id = newId();
+        saveTabId(id);
+        finish();
+      }
+    };
+    window.addEventListener('pagehide', function () {
+      leaving = true;
+    });
+    window.addEventListener('pageshow', function () {
+      leaving = false;
+    });
+    function finish() {
+      if (settled) return;
+      settled = true;
+      done(id);
+    }
+    channel.postMessage({ type: 'hello', id: id, nonce: nonce });
+    return setTimeout(finish, DUPLICATE_CHECK_MS);
+  }
+
   function setStream(state) {
     document.documentElement.setAttribute('data-teach-stream', state);
   }
@@ -82,9 +139,9 @@
 
   // EventSource cannot send a header, so read the stream with fetch to keep the token
   // out of the URL.
-  function connect(token, delay) {
+  function connect(token, tab, delay) {
     setStream('connecting');
-    fetch('/events', { headers: { 'X-Teach-Token': token } })
+    fetch('/events', { headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab } })
       .then(function (response) {
         if (response.status === 401) {
           setStream('unauthorised');
@@ -112,7 +169,7 @@
       .catch(function () {
         setStream('closed');
         setTimeout(function () {
-          connect(token, Math.min(delay * 2, 10000));
+          connect(token, tab, Math.min(delay * 2, 10000));
         }, delay);
       });
   }
@@ -177,7 +234,14 @@
     return minutes + ':' + (rest < 10 ? '0' : '') + rest;
   }
 
-  function startChat(token) {
+  // What the page says about the lease when it does not hold it.
+  var LEASE_NOTICES = {
+    'not-interactive': 'AI interaction is only available on one page at a time, and you already have another page open.',
+    displaced: 'Another page took over AI interaction.',
+    free: 'The other page has closed. You can use AI interaction on this page.',
+  };
+
+  function startChat(token, tab, takeLease) {
     var thread = loadThread();
     var panel = element('section', 'teach-panel');
     panel.setAttribute('aria-label', 'Ask the teacher');
@@ -187,6 +251,9 @@
     list.setAttribute('aria-live', 'polite');
     var status = element('div', 'teach-status');
     status.hidden = true;
+    var notice = element('div', 'teach-lease');
+    notice.setAttribute('role', 'status');
+    notice.hidden = true;
     var form = element('form', 'teach-composer');
     var input = element('textarea', 'teach-input');
     input.rows = 2;
@@ -199,12 +266,18 @@
     panel.appendChild(heading);
     panel.appendChild(list);
     panel.appendChild(status);
+    panel.appendChild(notice);
     panel.appendChild(form);
     var root = document.getElementById('teach-widget');
     root.appendChild(panel);
 
     var pollTimer = null;
     var pollFailures = 0;
+    // Whether this page holds the lease: 'unknown' until the server says, then 'interactive',
+    // 'not-interactive', 'displaced' (another page took it) or 'free' (the holder went away).
+    // Only the holder sends, waits for replies or writes the thread.
+    var lease = 'unknown';
+    var leaseProblem = '';
 
     function findMessage(matches) {
       for (var i = 0; i < thread.length; i += 1) {
@@ -253,7 +326,12 @@
           block.appendChild(element('strong', null, "Couldn't send (" + entry.code + ')'));
           block.appendChild(element('p', null, entry.message));
           block.appendChild(element('p', null, entry.hint || FALLBACK_HINTS[entry.code] || FALLBACK_HINTS.failed));
-          if (index === errorIndex && RETRYABLE[entry.code]) {
+          if (index === errorIndex && entry.code === 'in-use' && lease !== 'interactive') {
+            var takeover = element('button', 'teach-retry', 'Use this page instead');
+            takeover.type = 'button';
+            takeover.addEventListener('click', takeLeaseNow);
+            block.appendChild(takeover);
+          } else if (index === errorIndex && (RETRYABLE[entry.code] || (entry.code === 'in-use' && lease === 'interactive'))) {
             var retry = element('button', 'teach-retry', 'Try again');
             retry.type = 'button';
             retry.addEventListener('click', function () {
@@ -265,11 +343,38 @@
         }
       });
       var waiting = pendingMessage();
-      input.disabled = !!waiting;
-      send.disabled = !!waiting;
-      input.placeholder = waiting ? 'Waiting for your teacher...' : 'Ask a question, or ask for a change...';
+      var holds = lease === 'interactive';
+      input.disabled = !!waiting || !holds;
+      send.disabled = !!waiting || !holds;
+      input.placeholder = !holds ? 'Not available on this page' : waiting ? 'Waiting for your teacher...' : 'Ask a question, or ask for a change...';
       renderStatus();
+      renderNotice();
       list.scrollTop = list.scrollHeight;
+    }
+
+    // The fixed message for a page that does not hold the lease, with the button that takes it.
+    function renderNotice() {
+      notice.textContent = '';
+      var text = LEASE_NOTICES[lease];
+      notice.hidden = !text;
+      if (!text) return;
+      notice.setAttribute('data-lease', lease);
+      notice.appendChild(element('p', null, text));
+      if (leaseProblem) notice.appendChild(element('p', 'teach-lease-problem', leaseProblem));
+      var take = element('button', lease === 'free' ? 'teach-send' : 'teach-retry', 'Use this page instead');
+      take.type = 'button';
+      take.addEventListener('click', takeLeaseNow);
+      notice.appendChild(take);
+    }
+
+    function takeLeaseNow() {
+      leaseProblem = '';
+      takeLease().then(function (taken) {
+        if (!taken) {
+          leaseProblem = 'Could not reach the teaching server. Run /teach for a fresh link.';
+          renderNotice();
+        }
+      });
     }
 
     function renderStatus() {
@@ -292,7 +397,16 @@
       if (hints.length) status.appendChild(element('div', 'teach-hint', hints[hints.length - 1][1]));
     }
 
+    // A page that has lost the lease may still be handed an answer it was already waiting for. The
+    // answer is written into the thread as the holder left it, not this page's older copy.
+    function current(message) {
+      if (lease === 'interactive') return message;
+      thread = loadThread();
+      return messageById(message.id) || message;
+    }
+
     function fail(message, code, text, hint) {
+      message = current(message);
       message.status = 'failed';
       thread.push({ kind: 'error', forId: message.id, code: code, message: text, hint: hint || '' });
       saveThread(thread);
@@ -300,6 +414,7 @@
     }
 
     function settle(message, result) {
+      message = current(message);
       if (result && result.ok) {
         message.status = 'done';
         thread.push({ kind: 'teacher', text: result.text });
@@ -317,7 +432,7 @@
     function poll() {
       clearTimeout(pollTimer);
       var message = pendingMessage();
-      if (!message) return;
+      if (!message || lease !== 'interactive') return;
       fetch('/reply/' + encodeURIComponent(message.id), { headers: { 'X-Teach-Token': token } })
         .then(function (response) {
           if (response.status === 401) {
@@ -350,7 +465,7 @@
     function deliver(message) {
       fetch('/send', {
         method: 'POST',
-        headers: { 'X-Teach-Token': token, 'Content-Type': 'application/json' },
+        headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab, 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: message.id, lesson: message.lesson, text: message.text }),
       })
         .then(function (response) {
@@ -365,6 +480,8 @@
             })
             .then(function (body) {
               var error = (body && body.error) || {};
+              // The server says another page holds the lease: believe it over what this page thought.
+              if (error.code === 'in-use') lease = 'not-interactive';
               fail(message, error.code || 'failed', error.message || 'That message could not be sent.', error.hint);
             });
         })
@@ -414,13 +531,34 @@
       }
     });
 
+    // A page that does not hold the lease shows the holder's conversation as it changes.
+    window.addEventListener('storage', function (event) {
+      if (event.key !== THREAD_KEY || lease === 'interactive') return;
+      thread = loadThread();
+      render();
+    });
+
     setInterval(renderStatus, 1000);
     render();
-    if (pendingMessage()) poll();
 
     // What the connection state does with the chat: show it, hide it (the thread is kept, in
     // memory and in localStorage), and mark a new agent conversation.
     return {
+      // The server's word on the lease. Becoming the holder reads the thread again, since another
+      // page has been writing it, and collects any reply that was still pending.
+      setLease: function (next) {
+        var before = lease;
+        lease = next;
+        if (next === 'interactive' && before !== 'interactive') {
+          thread = loadThread();
+          leaseProblem = '';
+          render();
+          if (pendingMessage()) poll();
+        } else {
+          if (next !== 'interactive') clearTimeout(pollTimer);
+          render();
+        }
+      },
       show: function () {
         panel.hidden = false;
         document.documentElement.setAttribute('data-teach-chat', 'on');
@@ -448,8 +586,9 @@
   // and no permission notice. Retry runs the test again on the server, and success switches this
   // same widget to live chat with no reload. The thread is kept whichever way it goes.
 
-  function startConnection(token, root) {
+  function startConnection(token, tab, root) {
     var chat = null;
+    var lease = 'unknown';
     var verdict = { state: 'pending' };
     var expanded = false;
     var retryProblem = '';
@@ -507,7 +646,8 @@
       verdict = next;
       retryProblem = '';
       if (next.state === 'interactive') {
-        if (!chat) chat = startChat(token);
+        if (!chat) chat = startChat(token, tab, takeLease);
+        chat.setLease(lease);
         chat.show();
         if (typeof next.generation === 'number' && next.generation > 1) chat.freshStart(next.generation);
       } else if (chat) {
@@ -533,9 +673,31 @@
         });
     }
 
+    function setLease(next) {
+      lease = next;
+      if (chat) chat.setLease(next);
+    }
+
+    // Ask for the lease. Resolves to whether the server gave it.
+    function takeLease() {
+      return fetch('/lease/take', { method: 'POST', headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab, 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (response) {
+          if (response.ok) setLease('interactive');
+          return response.ok;
+        })
+        .catch(function () {
+          return false;
+        });
+    }
+
     // The server sends the current state when the stream opens, and again on every change.
     document.addEventListener('teach:event', function (event) {
-      if (event.detail.type === 'handshake') apply(event.detail.data);
+      var type = event.detail.type;
+      var data = event.detail.data || {};
+      if (type === 'handshake') apply(data);
+      else if (type === 'lease' && (data.state === 'interactive' || data.state === 'not-interactive')) setLease(data.state);
+      else if (type === 'displaced') setLease('displaced');
+      else if (type === 'lease-free' && lease !== 'interactive') setLease('free');
     });
     renderGate();
   }
@@ -687,9 +849,12 @@
       setStream('no-token');
       return;
     }
-    connect(token, 1000);
-    startConnection(token, root);
     startSignals(root);
+    // The stream announces the tab, so it waits until the tab knows its id (a copy takes a new one).
+    resolveTabId(function (tab) {
+      startConnection(token, tab, root);
+      connect(token, tab, 1000);
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

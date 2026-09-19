@@ -2,7 +2,10 @@
 // Shared by the chat tests: a real server with a scripted fake adapter behind it.
 const assert = require('node:assert/strict');
 const { startServer } = require('../bridge/server');
-const { makeWorkspace, post, get } = require('./helpers');
+const { makeWorkspace, post, get, openTab } = require('./helpers');
+
+// The page that holds the lease in the chat and handshake tests: they send as this tab.
+const HOLDER = 'tab-holder';
 const { fakeAdapter } = require('./fake-adapter-client');
 
 const LESSON = '<!doctype html><html><body><h1>Loops</h1></body></html>';
@@ -20,16 +23,18 @@ async function withChat(t, script, options = {}) {
     session: 'sess-1',
     ...options,
   });
+  const page = await openTab(server, HOLDER);
   t.after(async () => {
+    page.close();
     await server.close();
     adapter.cleanup();
     ws.cleanup();
   });
-  return { ws, server, adapter };
+  return { ws, server, adapter, page };
 }
 
-const sendMessage = (server, message, token) =>
-  post(server, '/send', { id: 'm1', lesson: LESSON_PATH, text: 'What is a loop?', ...message }, token);
+const sendMessage = (server, message, token, tab = HOLDER) =>
+  post(server, '/send', { id: 'm1', lesson: LESSON_PATH, text: 'What is a loop?', ...message }, token, tab);
 
 // Poll the reply route until the message is no longer pending.
 async function awaitReply(server, id, ms = 5000) {
@@ -47,4 +52,4 @@ async function replyTo(server, id, message = {}) {
   return awaitReply(server, id);
 }
 
-module.exports = { LESSON, LESSON_PATH, reply, failure, withChat, sendMessage, awaitReply, replyTo };
+module.exports = { HOLDER, LESSON, LESSON_PATH, reply, failure, withChat, sendMessage, awaitReply, replyTo };

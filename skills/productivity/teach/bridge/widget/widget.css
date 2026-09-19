@@ -316,3 +316,36 @@ a.teach-next {
     outline-offset: 2px;
   }
 }
+
+/* The page does not hold the lease: a fixed message and the button that takes it. */
+.teach-lease {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  color: var(--teach-fg);
+  background: var(--teach-teacher);
+  border: 1px solid var(--teach-line);
+  border-radius: 8px;
+}
+
+.teach-lease p {
+  margin: 0 0 8px;
+}
+
+.teach-lease .teach-retry {
+  margin-top: 0;
+  color: var(--teach-accent);
+  border-color: var(--teach-accent);
+}
+
+/* The other page has closed: the way to take over is the obvious next step. */
+.teach-lease[data-lease='free'] {
+  border-color: var(--teach-accent);
+}
+
+.teach-lease-problem {
+  color: var(--teach-error-fg);
+}
+
+.teach-input:disabled {
+  opacity: 0.6;
+}

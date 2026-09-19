@@ -9,6 +9,7 @@ const net = require('node:net');
 const { createChat, failure } = require('./chat');
 const { createHandshake } = require('./handshake');
 const { checkSignal, createSignalDrop } = require('./signals');
+const { createLease, TAB_ID_PATTERN } = require('./lease');
 
 const WIDGET_DIR = path.join(__dirname, 'widget');
 const WIDGET_TAGS =
@@ -150,6 +151,13 @@ function hasToken(req, token) {
   const a = Buffer.from(given);
   const b = Buffer.from(token);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// The tab id a page announces in a header: null when it names none, false when it is malformed.
+function tabIdOf(req) {
+  const given = req.headers['x-teach-tab'];
+  if (given === undefined) return null;
+  return typeof given === 'string' && TAB_ID_PATTERN.test(given) ? given : false;
 }
 
 function blockList(subnets) {
@@ -296,7 +304,7 @@ function writeState(dir, state) {
   fs.renameSync(temporary, file);
 }
 
-async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs, signalPollMs = 1000 }) {
+async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs, signalPollMs = 1000, leaseGraceMs }) {
   const root = fs.realpathSync(workspace);
   const stateDir = path.join(root, STATE_DIR);
   const stateFile = path.join(stateDir, STATE_FILE);
@@ -304,6 +312,7 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
   const token = crypto.randomBytes(32).toString('hex');
   const streams = new Set();
   const running = new Set();
+  const lease = createLease({ graceMs: leaseGraceMs });
   const chat = createChat({
     workspace: root,
     running,
@@ -320,13 +329,18 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
 
   const frameOf = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
-  const openStream = (res) => {
+  const openStream = (res, tab) => {
     res.writeHead(200, baseHeaders({ 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive' }));
     res.write(': connected\n\n');
     // A page that connects late, or a tier 2 page, still learns how the handshake went.
     res.write(frameOf('handshake', handshake.state));
     streams.add(res);
-    res.on('close', () => streams.delete(res));
+    // A page that names its tab is told whether it holds the lease; one that does not is only watching.
+    const leaveLease = tab ? lease.connect(tab, (event, data) => res.write(frameOf(event, data))) : null;
+    res.on('close', () => {
+      streams.delete(res);
+      if (leaveLease) leaveLease();
+    });
   };
 
   const broadcast = (event, data) => {
@@ -368,6 +382,9 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     const rawPath = req.url.split('?')[0];
     if (req.method === 'POST' && rawPath === '/send') {
       if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      if (!lease.isHolder(tabIdOf(req))) {
+        return sendJson(res, 409, lease.hasHolder() ? failure('in-use') : failure('in-use', 'AI interaction is not active on this page.'));
+      }
       return readJson(req, res, (body) => {
         const outcome = chat.submit(body);
         sendJson(res, outcome.status, outcome.body);
@@ -382,6 +399,13 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
         if (!outcome.ok) return sendJson(res, 400, outcome);
         return sendJson(res, 200, { ok: true, delivered: fireSignal(outcome) });
       });
+    }
+    if (req.method === 'POST' && rawPath === '/lease/take') {
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      const tab = tabIdOf(req);
+      if (!tab) return sendJson(res, 400, { ok: false, message: 'A tab id is required.' });
+      if (!lease.take(tab)) return sendJson(res, 409, { ok: false, message: 'That page is not connected to the server.' });
+      return sendJson(res, 200, { ok: true, state: 'interactive' });
     }
     if (req.method === 'POST' && rawPath === '/retry') {
       if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
@@ -408,7 +432,9 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     }
     if (rawPath === '/events') {
       if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
-      return openStream(res);
+      const tab = tabIdOf(req);
+      if (tab === false) return sendText(res, 400, 'Bad tab id');
+      return openStream(res, tab);
     }
     if (rawPath === '/_teach/identity') {
       if (!isLoopbackPeer(req)) return sendText(res, 404, 'Not found');
@@ -439,6 +465,7 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
       if (readState(stateFile)?.pid === process.pid) fs.rmSync(stateFile, { force: true });
       clearInterval(heartbeat);
       signalDrop.stop();
+      lease.close();
       handshake.stop();
       const adaptersGone = chat.close();
       for (const res of streams) res.end();

@@ -25,9 +25,11 @@ function url(server, pathname, host = '127.0.0.1') {
 
 // Open the SSE stream with fetch (EventSource cannot send the token header).
 // Returns { response, waitFor(regex), close() }.
-async function openEvents(server, token, host = '127.0.0.1') {
+// `tab` is the page's tab id (the lease identity); without one the stream is a plain observer.
+async function openEvents(server, token, host = '127.0.0.1', tab = null) {
   const controller = new AbortController();
   const headers = token ? { 'X-Teach-Token': token } : {};
+  if (tab) headers['X-Teach-Tab'] = tab;
   const response = await fetch(url(server, '/events', host), { headers, signal: controller.signal });
   let received = '';
   const waiting = [];
@@ -68,10 +70,11 @@ async function openEvents(server, token, host = '127.0.0.1') {
   };
 }
 
-// POST a JSON body. The token goes in the header, as the page sends it.
-function post(server, pathname, body, token = server.token) {
+// POST a JSON body. The token and the tab id go in headers, as the page sends them.
+function post(server, pathname, body, token = server.token, tab = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['X-Teach-Token'] = token;
+  if (tab) headers['X-Teach-Tab'] = tab;
   return fetch(url(server, pathname), { method: 'POST', headers, body: JSON.stringify(body) });
 }
 
@@ -79,4 +82,11 @@ function get(server, pathname, token = server.token) {
   return fetch(url(server, pathname), { headers: token ? { 'X-Teach-Token': token } : {} });
 }
 
-module.exports = { makeWorkspace, openEvents, url, post, get };
+// A page: an open stream that announces a tab id. The first one to connect holds the lease.
+function openTab(server, tab) {
+  return openEvents(server, server.token, '127.0.0.1', tab);
+}
+
+const takeLease = (server, tab) => post(server, '/lease/take', {}, server.token, tab);
+
+module.exports = { makeWorkspace, openEvents, openTab, takeLease, url, post, get };

@@ -2,7 +2,8 @@
 // Shared by the handshake tests: a real server that runs the start-of-session handshake
 // against a scripted fake adapter (no session given up front, so it must earn one).
 const { startServer } = require('../bridge/server');
-const { makeWorkspace, get, post } = require('./helpers');
+const { makeWorkspace, get, post, openTab } = require('./helpers');
+const { HOLDER } = require('./chat-helpers');
 const { fakeAdapter } = require('./fake-adapter-client');
 
 const ok = (extra = {}) => ({ type: 'result', ok: true, ...extra });
@@ -18,12 +19,14 @@ async function withHandshake(t, script, options = {}) {
   });
   const adapter = fakeAdapter(script);
   const server = await startServer({ workspace: ws.dir, bind: { mode: 'loopback' }, adapter: adapter.command, ...options.server });
+  const page = await openTab(server, HOLDER);
   t.after(async () => {
+    page.close();
     await server.close();
     adapter.cleanup();
     ws.cleanup();
   });
-  return { ws, server, adapter };
+  return { ws, server, adapter, page };
 }
 
 const handshakeState = async (server) => (await get(server, '/handshake')).json();
