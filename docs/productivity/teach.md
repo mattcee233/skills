@@ -39,9 +39,9 @@ What accumulates in that directory:
 | `.teach/*` | Interactive mode only. Machine-local settings, the launcher the agent signals with, and any connector the agent wrote. It ignores itself, so none of it is ever committed |
 | `AGENTS.md` | Interactive mode only. A marked "Teaching signals" block telling the agent how to signal the open page. `CLAUDE.md` gets an `@AGENTS.md` import |
 
-Interactive mode needs Node 18 or later, checked when you opt in, and the command-line tool of the harness you are using: `claude` for Claude Code, `agy` for Antigravity, `pi` for pi and Pithagoras. Without either, you still get the lessons as plain files.
-
 Two honest notes on that list. A glossary suits most topics, but the skill ships a `GLOSSARY-FORMAT.md` that `SKILL.md` no longer links to, so you will only get one if you ask ([issue #559](https://github.com/mattpocock/skills/issues/559)). And the workspace is not always created where you expect, so see the first question below before you build a long course on top of it.
+
+Interactive mode is optional. It needs Node 18 or later, checked when you opt in, and the command-line tool of the [harness](https://www.aihero.dev/ai-coding-dictionary/harness) you are running in (the table under "Interactive lessons" names it). Without Node, or if you would rather not install it, you get the lessons as plain files; without the tool, you get the pages served but with chat not connected, and the agent shows you how to install it.
 
 ## Storage strength, not fluency
 
@@ -71,11 +71,18 @@ Every `/teach` in an interactive workspace starts a fresh server on a random por
 | --- | --- | --- |
 | 1. Interactive | The lesson page with a live chat panel | Everything works |
 | 2. Served, chat not connected | The same pages, and a small "Chat not connected" pill with the reason, the fix and a Retry button | The CLI is missing, the login has lapsed, or the connection test failed |
-| 3. Plain files | Lessons as files you open yourself, exactly as before | You said no, or Node is missing or older than 18 |
+| 3. Plain files | Lessons as files you open yourself, exactly as before | You said no, or you chose not to install Node (it must be version 18 or later) |
 
 **Asking the teacher.** Your words go to the agent unchanged, with one added line saying which lesson you sent them from, so "make this simpler" has something to point at. The agent can revise the current lesson, write the next one, update your learning records and research a tangent. When it does, the page updates in place: the next-lesson button appears or moves, and a revised lesson reloads under you with your quiz answers and chat kept. One conversation carries across lessons for the session, and it is gone when the session ends.
 
-**What the agent may do.** Before your first message each session, the panel shows an amber notice of exactly what the connected agent is allowed to do, and the message box stays blocked until you confirm it. For Claude Code the set is fixed and narrow: read and edit files in the workspace, browse for research, and run only the signalling command. Antigravity gets file access and browsing and, unless it has been granted a narrow terminal rule, signals by dropping a file rather than running a command. pi and Pithagoras cannot be narrowed: that agent already runs with its process's full permissions and has no approval prompts, and its notice says so. A connector the agent wrote itself is marked as AI-written and unreviewed.
+**What the agent may do.** Before your first message each session, the panel shows an amber notice of exactly what the connected agent is allowed to do, and the message box stays blocked until you confirm it. What it says depends on the harness:
+
+| Harness | CLI it uses | What the agent may do |
+| --- | --- | --- |
+| Claude Code | `claude` | A fixed, narrow set: read and edit files in the workspace, browse for research, and run only the signalling command |
+| Antigravity | `agy` | File access and browsing. Unless it has been granted a narrow terminal rule, it signals by dropping a file rather than running a command |
+| pi and Pithagoras | `pi` | Cannot be narrowed: the agent already runs with its process's full permissions and has no approval prompts, and the notice says so. Web research works only if the `pi-web-access` package is installed |
+| Another harness | its own | Whatever the connector the agent wrote allows. The notice marks it as AI-written and unreviewed |
 
 **"This computer" and "other devices".** You are asked which address to serve on. "This computer" listens on loopback only, and is the default for a desktop harness. "Other devices" listens on loopback plus the one private network address you pick, never on every interface, so a phone or tablet on your network can read the lesson. For Pithagoras "this computer" is not offered at all: the agent runs on a different machine from your browser, so the server is always served on the network. Every request that sends a message needs the token. The chat runs through your own harness's command-line tool under your own login, so keep "other devices" to your own devices.
 
@@ -105,7 +112,7 @@ No to the first, and not reliably to the second. Spacing and interleaving are pr
 No, and the non-coding use is the larger part of the record: Korean, Japanese formal register, piano, guitar, board game design, OpenSCAD, film plots, Azure and CCNA certifications, university exams, and children of eight and ten getting printable books on escape rooms and fire salamanders. Nothing in the skill is programming-specific: mission, resources, zone of proximal development and drill work the same way in any domain. Within code, the strongest reported use is not learning a language from scratch but getting oriented in an unfamiliar codebase or a new team's stack.
 
 **Which model should I run it with?**
-There is no canonical answer, and the reported differences are large. Higher [reasoning effort](https://www.aihero.dev/ai-coding-dictionary/effort) has been reported to produce noticeably better lessons than the medium setting. One user ran the same skill through Copilot CLI with Codex and got a single 30-line HTML card where Claude Code produced a full lesson. It runs unmodified in Claude Cowork, subject to whether your organisation allows skills to be added there. If the lessons come out thin, change model, [harness](https://www.aihero.dev/ai-coding-dictionary/harness) or effort before rewriting your prompt.
+There is no canonical answer, and the reported differences are large. Higher [reasoning effort](https://www.aihero.dev/ai-coding-dictionary/effort) has been reported to produce noticeably better lessons than the medium setting. One user ran the same skill through Copilot CLI with Codex and got a single 30-line HTML card where Claude Code produced a full lesson. It runs unmodified in Claude Cowork, subject to whether your organisation allows skills to be added there. If the lessons come out thin, change model, harness or effort before rewriting your prompt.
 
 **The page says "Chat not connected". What do I do?**
 Read the one line under the pill: it names the problem and the fix, written for your harness. Then press Retry, or type "check again" in the agent's own window. The common causes:
@@ -114,8 +121,8 @@ Read the one line under the pill: it names the problem and the fix, written for 
 | --- | --- |
 | The CLI is not installed | Run the install steps the agent shows you for your operating system, then Retry. If it still cannot find it, restart the app you are running the agent in: an app started before the install has an old PATH |
 | It is not logged in | Log in yourself: `claude auth login` (or `/login` inside Claude Code), or start `agy` and run `/login`, or run `pi` and use `/login`. Then Retry |
-| The usage limit is reached | Your allowance for that harness has run out. Wait for it to renew, then press Try again |
-| The connection test failed its safety check | The connector did something it must not do, so chat stays off. `/teach interactive` starts again from scratch |
+| The usage limit is reached | Your allowance for that harness has run out. Wait for it to renew, then press Retry (or Try again if it happened mid-chat) |
+| The connection test failed its safety check | The connector did something it must not do, so chat stays off. Press Retry, or run `/teach interactive` to test everything again |
 
 The agent shows install and login steps but never runs an installer and never touches your credentials. If you decline, that is recorded once and it will not nag.
 
@@ -127,9 +134,6 @@ A slow answer is normal: the panel shows a spinner with the elapsed time and a r
 
 **The link stopped working, or the panel says the server is not running.**
 Each `/teach` starts a fresh server and the old one is stopped, so a link from an earlier session is dead. Run `/teach` again for a new link. Your chat history does not carry over, because it lives only for that session.
-
-**Do I have to use it?**
-No. Nothing in interactive mode is needed for the lessons themselves. A lesson opened later as a plain file is clean and complete, and its follow-up line ("ask in the chat panel if you see one, or ask me in this conversation") is true either way.
 
 ## It's working if
 
