@@ -119,6 +119,7 @@ test('decline records declined, after which a session start is silent and starts
     assert.equal(notice.silent, true);
     assert.equal(notice.canStart, false);
     assert.equal(fs.existsSync(path.join(ws.dir, '.teach', 'adapters')), false, 'no adapter written');
+    assert.equal(fs.readFileSync(path.join(ws.dir, '.teach', '.gitignore'), 'utf8'), '*\n', 'the machine-local config is ignored');
   } finally {
     ws.cleanup();
   }

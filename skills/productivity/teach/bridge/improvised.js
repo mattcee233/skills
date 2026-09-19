@@ -4,23 +4,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseFlags } = require('./flags');
+const { readConfig, recordOutcome, writeIgnoreFile } = require('./setup');
 
 const UNREVIEWED_CONNECTOR_WARNING =
   'This connector was written by an AI for this workspace and has not been reviewed. Check what it does before you rely on it.';
 
 // Look for a kept adapter in the workspace-local .teach/adapters/ folder.
 function findKeptAdapter(workspace) {
-  const configPath = path.join(workspace, '.teach', 'config.json');
-  if (fs.existsSync(configPath)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      if (config.adapter && typeof config.adapter === 'string') {
-        const full = path.isAbsolute(config.adapter) ? config.adapter : path.join(workspace, config.adapter);
-        if (fs.existsSync(full)) return full;
-      }
-    } catch {
-      // ignore invalid config
-    }
+  const config = readConfig(workspace);
+  if (config && config.adapter && typeof config.adapter === 'string') {
+    const full = path.isAbsolute(config.adapter) ? config.adapter : path.join(workspace, config.adapter);
+    if (fs.existsSync(full)) return full;
   }
 
   const adaptersDir = path.join(workspace, '.teach', 'adapters');
@@ -35,32 +29,6 @@ function findKeptAdapter(workspace) {
     return null;
   }
   return null;
-}
-
-// Record an outcome (e.g. 'ok', 'declined', 'login-failed', 'no-node') into .teach/config.json.
-function recordOutcome(workspace, outcome) {
-  const teachDir = path.join(workspace, '.teach');
-  fs.mkdirSync(teachDir, { recursive: true });
-  const configPath = path.join(teachDir, 'config.json');
-
-  let current = { version: 1 };
-  if (fs.existsSync(configPath)) {
-    try {
-      current = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    } catch {
-      current = { version: 1 };
-    }
-  }
-
-  current.version = current.version || 1;
-  current.outcome = {
-    status: outcome.status,
-    cli: outcome.cli || null,
-    date: outcome.date || new Date().toISOString(),
-    ...(outcome.hint ? { hint: outcome.hint } : {}),
-  };
-
-  fs.writeFileSync(configPath, JSON.stringify(current, null, 2) + '\n');
 }
 
 // Build standard source code for a workspace-local improvised adapter adhering to the adapter contract.
@@ -234,8 +202,7 @@ function scaffoldAdapter(workspace, flags) {
   const name = flags.name === undefined ? 'connector' : flags.name;
   if (!ADAPTER_NAME.test(name)) throw new Error('--name must be lowercase letters, digits and dashes');
 
-  const teachDir = path.join(workspace, '.teach');
-  const adaptersDir = path.join(teachDir, 'adapters');
+  const adaptersDir = path.join(workspace, '.teach', 'adapters');
   const target = path.join(adaptersDir, `${name}.js`);
   if (fs.existsSync(target)) {
     throw new Error(
@@ -245,8 +212,7 @@ function scaffoldAdapter(workspace, flags) {
   }
 
   fs.mkdirSync(adaptersDir, { recursive: true });
-  const ignoreFile = path.join(teachDir, '.gitignore');
-  if (!fs.existsSync(ignoreFile)) fs.writeFileSync(ignoreFile, '*\n');
+  writeIgnoreFile(workspace);
   const source = buildImprovisedAdapterSource({ engineCli, permissions: flags.permissions, loginHint: flags['login-hint'] });
   fs.writeFileSync(target, source, { flag: 'wx', mode: 0o755 });
   return { written: target, command: [process.execPath, target], name };
@@ -290,6 +256,5 @@ module.exports = {
   scaffoldAdapter,
   UNREVIEWED_CONNECTOR_WARNING,
   findKeptAdapter,
-  recordOutcome,
   buildImprovisedAdapterSource,
 };

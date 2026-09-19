@@ -257,3 +257,38 @@ test('CLI setup runs setup on a workspace and outputs result JSON', async () => 
   }
 });
 
+
+// ---------------------------------------------------------------------------
+// One writer for the recorded outcome
+// ---------------------------------------------------------------------------
+test('recordOutcome writes the one outcome shape, keeps the rest of the config, and keeps .teach ignored', () => {
+  const { recordOutcome, readConfig, writeConfig } = require('../bridge/setup');
+  const ws = makeWorkspace({});
+  try {
+    writeConfig(ws.dir, { version: 1, adapter: '.teach/adapters/connector.js', cli: 'my-engine', outcome: { status: 'ok', cli: 'my-engine', date: 'x', hint: null } });
+
+    const outcome = recordOutcome(ws.dir, { status: 'declined' });
+    assert.deepEqual(Object.keys(outcome).sort(), ['cli', 'date', 'hint', 'status']);
+    assert.equal(outcome.status, 'declined');
+    assert.equal(outcome.hint, null);
+    assert.equal(outcome.cli, null);
+    assert.ok(!Number.isNaN(Date.parse(outcome.date)));
+
+    const config = readConfig(ws.dir);
+    assert.equal(config.adapter, '.teach/adapters/connector.js', 'other keys are kept');
+    assert.deepEqual(config.outcome, outcome);
+
+    // A config written into a bare .teach folder is never left unignored.
+    const bare = makeWorkspace({});
+    try {
+      recordOutcome(bare.dir, { status: 'login-failed', cli: 'claude', hint: 'Run claude auth login.' });
+      assert.equal(require('node:fs').readFileSync(require('node:path').join(bare.dir, '.teach', '.gitignore'), 'utf8'), '*\n');
+      assert.equal(readConfig(bare.dir).version, 1);
+      assert.equal(readConfig(bare.dir).outcome.hint, 'Run claude auth login.');
+    } finally {
+      bare.cleanup();
+    }
+  } finally {
+    ws.cleanup();
+  }
+});

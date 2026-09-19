@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { getProfile } = require('./profiles');
-const { readConfig, writeConfig, teachDir } = require('./setup');
+const { readConfig, recordOutcome } = require('./setup');
 const { startServer } = require('./server');
 const { parseFlags } = require('./flags');
 
@@ -320,18 +320,10 @@ function recordSessionOutcome(workspace, { status, reason, hint, cli }) {
     return { recorded: false };
   }
 
-  const existing = readConfig(workspace) || { version: 1 };
-  const updated = {
-    ...existing,
-    outcome: {
-      status: recordStatus,
-      cli: cli !== undefined ? cli : (existing.outcome && existing.outcome.cli) || null,
-      date: new Date().toISOString(),
-      hint: recordHint,
-    },
-  };
-  writeConfig(workspace, updated);
-  return { recorded: true, outcome: updated.outcome };
+  const existing = readConfig(workspace);
+  const keptCli = existing && existing.outcome ? existing.outcome.cli : null;
+  const outcome = recordOutcome(workspace, { status: recordStatus, cli: cli !== undefined ? cli : keptCli, hint: recordHint });
+  return { recorded: true, outcome };
 }
 
 function getSessionStartNotice(workspace) {

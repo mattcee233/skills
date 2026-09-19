@@ -17,9 +17,9 @@ const { awaitVerdict, handshakeState } = require('./handshake-helpers');
 const {
   UNREVIEWED_CONNECTOR_WARNING,
   findKeptAdapter,
-  recordOutcome,
   buildImprovisedAdapterSource,
 } = require('../bridge/improvised');
+const { recordOutcome } = require('../bridge/setup');
 
 // Create a scriptable stub engine executable
 function makeScriptableEngine(t) {

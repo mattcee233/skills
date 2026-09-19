@@ -66,6 +66,20 @@ function writeIgnoreFile(workspace) {
   fs.writeFileSync(path.join(dir, '.gitignore'), '*\n', 'utf8');
 }
 
+// The recorded outcome has one shape everywhere: { status, cli, date, hint }.
+function makeOutcome({ status, cli = null, hint = null, date }) {
+  return { status, cli, date: date || new Date().toISOString(), hint };
+}
+
+// Record the outcome in the config, keeping every other key. A config in .teach/ is always
+// machine-local, so the ignore file is (re)written here too.
+function recordOutcome(workspace, outcome) {
+  writeIgnoreFile(workspace);
+  const config = { ...(readConfig(workspace) || { version: CONFIG_VERSION }), outcome: makeOutcome(outcome) };
+  writeConfig(workspace, config);
+  return config.outcome;
+}
+
 function installLauncher(workspace) {
   const dir = teachDir(workspace);
   if (!fs.existsSync(dir)) {
@@ -136,12 +150,7 @@ function setupWorkspace(workspace, options = {}) {
       version: CONFIG_VERSION,
       adapter: null,
       cli: null,
-      outcome: {
-        status: 'declined',
-        cli: null,
-        date: new Date().toISOString(),
-        hint: null,
-      },
+      outcome: makeOutcome({ status: 'declined' }),
     };
     writeConfig(workspace, config);
     return { ok: true, interactive: false, status: 'declined' };
@@ -155,12 +164,7 @@ function setupWorkspace(workspace, options = {}) {
         version: CONFIG_VERSION,
         adapter: null,
         cli: null,
-        outcome: {
-          status: 'no-node',
-          cli: null,
-          date: new Date().toISOString(),
-          hint: options.hint || 'Install Node 18 or later to use interactive mode.',
-        },
+        outcome: makeOutcome({ status: 'no-node', hint: options.hint || 'Install Node 18 or later to use interactive mode.' }),
       };
       writeConfig(workspace, config);
       return { ok: false, reason: 'no-node', status: 'no-node' };
@@ -174,12 +178,7 @@ function setupWorkspace(workspace, options = {}) {
     version: CONFIG_VERSION,
     adapter: options.adapter || null,
     cli: options.cli || null,
-    outcome: {
-      status: 'ok',
-      cli: options.cli || null,
-      date: new Date().toISOString(),
-      hint: null,
-    },
+    outcome: makeOutcome({ status: 'ok', cli: options.cli || null }),
   };
   writeConfig(workspace, config);
   installLauncher(workspace);
@@ -273,6 +272,7 @@ module.exports = {
   readConfig,
   writeConfig,
   writeIgnoreFile,
+  recordOutcome,
   installLauncher,
   applyAgentsSignals,
   applyClaudeImport,

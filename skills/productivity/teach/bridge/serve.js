@@ -8,15 +8,7 @@
 // unreviewed, which the widget's permission notice says.
 const fs = require('node:fs');
 const { startServer } = require('./server');
-
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 0; i < argv.length; i += 2) {
-    if (!argv[i].startsWith('--')) throw new Error(`Unexpected argument "${argv[i]}"`);
-    args[argv[i].slice(2)] = argv[i + 1];
-  }
-  return args;
-}
+const { parseFlags: parseArgs } = require('./flags');
 
 // The adapter command is an array, never a shell string.
 function parseAdapter(text) {
