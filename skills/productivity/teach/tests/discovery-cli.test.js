@@ -6,8 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { installStub, makeMachine, executableName } = require('./discovery-helpers');
-const { knownCandidates } = require('../bridge/discovery');
+const { installStub, makeMachine, runnableFolderFor } = require('./discovery-helpers');
 const { startServer } = require('../bridge/server');
 const { installLauncher } = require('../bridge/setup');
 const { makeWorkspace } = require('./helpers');
@@ -26,11 +25,6 @@ function run(file, args, { cwd = TEACH, env = process.env } = {}) {
     child.stderr.on('data', (c) => (stderr += c));
     child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
-}
-
-function runnableFolderFor(cli, machine) {
-  const candidates = knownCandidates({ cli, platform: process.platform, env: machine.env, home: machine.home });
-  return path.dirname(candidates.find((file) => path.basename(file) === executableName(cli)));
 }
 
 test('assess prints the state for a harness as one JSON line', async (t) => {

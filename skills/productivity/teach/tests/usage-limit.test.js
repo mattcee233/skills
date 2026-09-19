@@ -12,6 +12,7 @@ const { makeStubClaude } = require('./claude-helpers');
 const { makeStubAgy } = require('./agy-helpers');
 const { makeStubPi } = require('./pi-helpers');
 const { startServer } = require('../bridge/server');
+const { awaitVerdict } = require('./handshake-helpers');
 
 const ADAPTERS = path.join(__dirname, '..', 'bridge', 'adapters');
 const SECRET = 'account acc_secret_999';
@@ -106,13 +107,7 @@ test('at start the page gets the usage-limit message and hint in the not-connect
     ws.cleanup();
   });
 
-  let state;
-  for (let i = 0; i < 100; i++) {
-    const res = await fetch(`http://127.0.0.1:${server.port}/handshake`, { headers: { 'X-Teach-Token': server.token } });
-    state = await res.json();
-    if (state.state !== 'pending') break;
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  const state = await awaitVerdict(server);
   assert.equal(state.state, 'static');
   assert.equal(state.reason, 'failed');
   assert.match(state.message, /usage limit/i);

@@ -6,18 +6,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { installStub, makeMachine, executableName } = require('./discovery-helpers');
-const { assessCli, knownCandidates, recordDecline, recordLoginFailed, locateCli } = require('../bridge/discovery');
+const { installStub, makeMachine, runnableFolderFor } = require('./discovery-helpers');
+const { assessCli, recordDecline, recordLoginFailed, locateCli } = require('../bridge/discovery');
 const { getSessionStartNotice } = require('../bridge/session');
 const { readConfig } = require('../bridge/setup');
 const { makeWorkspace } = require('./helpers');
 
 const ACCOUNT = JSON.stringify({ email: 'learner@secret.corp', account_id: 'acc_secret_999' });
-
-function runnableFolderFor(cli, machine) {
-  const candidates = knownCandidates({ cli, platform: process.platform, env: machine.env, home: machine.home });
-  return path.dirname(candidates.find((file) => path.basename(file) === executableName(cli)));
-}
 
 test('a CLI that is found and logged in is ready and needs no steps', (t) => {
   const machine = makeMachine(t);

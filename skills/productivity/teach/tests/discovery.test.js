@@ -6,16 +6,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { installStub, makeMachine, executableName } = require('./discovery-helpers');
+const { installStub, makeMachine, runnableFolderFor } = require('./discovery-helpers');
 const { discoverCli, knownCandidates } = require('../bridge/discovery');
-
-// The known install location this host can run a stub from (a .cmd shim on Windows).
-function runnableFolderFor(cli, machine) {
-  const candidates = knownCandidates({ cli, platform: process.platform, env: machine.env, home: machine.home });
-  const match = candidates.find((file) => path.basename(file) === executableName(cli));
-  assert.ok(match, `a known install location for ${cli} that this host can run a stub from`);
-  return path.dirname(match);
-}
 
 test('a CLI on PATH is found and confirmed with --version', (t) => {
   const machine = makeMachine(t);

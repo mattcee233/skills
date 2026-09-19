@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { knownCandidates } = require('../bridge/discovery');
 const { makeStubClaude } = require('./claude-helpers');
 const { makeStubAgy } = require('./agy-helpers');
 const { makeStubPi } = require('./pi-helpers');
@@ -51,4 +52,12 @@ function makeMachine(t) {
   return { root, home, env, emptyPath, withPath: (...dirs) => ({ ...env, PATH: dirs.join(path.delimiter), Path: dirs.join(path.delimiter) }) };
 }
 
-module.exports = { installStub, makeMachine, executableName };
+// The known install folder for a CLI that this host can run a stub from (a .cmd shim on Windows).
+function runnableFolderFor(cli, machine) {
+  const candidates = knownCandidates({ cli, platform: process.platform, env: machine.env, home: machine.home });
+  const match = candidates.find((file) => path.basename(file) === executableName(cli));
+  if (!match) throw new Error(`no known install location for ${cli} that this host can run a stub from`);
+  return path.dirname(match);
+}
+
+module.exports = { installStub, makeMachine, executableName, runnableFolderFor };
