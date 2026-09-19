@@ -572,3 +572,114 @@ a.teach-next {
 [data-quiz-type="freetext"] [data-quiz-answer][hidden] {
   display: none;
 }
+
+/* The teacher's replies are Markdown, shown formatted (markdown.js). A message that is only words
+   (a reply too long to format) keeps its line breaks instead. */
+.teach-message.teach-md {
+  white-space: normal;
+}
+
+.teach-message.teach-md.teach-md-plain {
+  white-space: pre-wrap;
+}
+
+.teach-md > :first-child {
+  margin-top: 0;
+}
+
+.teach-md > :last-child {
+  margin-bottom: 0;
+}
+
+.teach-md p {
+  margin: 0.5em 0;
+}
+
+.teach-md h3,
+.teach-md h4,
+.teach-md h5,
+.teach-md h6 {
+  margin: 0.8em 0 0.3em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.teach-md .teach-md-h1 {
+  font-size: 1.45em;
+}
+
+.teach-md .teach-md-h2 {
+  font-size: 1.25em;
+}
+
+.teach-md .teach-md-h3 {
+  font-size: 1.1em;
+}
+
+.teach-md .teach-md-h4 {
+  font-size: 1em;
+}
+
+.teach-md .teach-md-h5 {
+  font-size: 0.95em;
+  color: var(--teach-muted);
+}
+
+.teach-md .teach-md-h6 {
+  font-size: 0.9em;
+  color: var(--teach-muted);
+}
+
+.teach-md ul,
+.teach-md ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+
+.teach-md li {
+  margin: 0.15em 0;
+}
+
+.teach-md code {
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.teach-md pre {
+  margin: 0.5em 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.15);
+  white-space: pre;
+}
+
+.teach-md pre code {
+  padding: 0;
+  background: none;
+}
+
+.teach-md blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.8em;
+  border-left: 3px solid var(--teach-line);
+  color: var(--teach-muted);
+}
+
+.teach-md hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--teach-line);
+}
+
+.teach-md a {
+  color: var(--teach-accent);
+  text-decoration: underline;
+}
+
+.teach-md u {
+  text-decoration: underline;
+}

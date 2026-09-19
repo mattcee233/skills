@@ -14,6 +14,7 @@ const { createLease, TAB_ID_PATTERN } = require('./lease');
 const WIDGET_DIR = path.join(__dirname, 'widget');
 const WIDGET_TAGS =
   '<link rel="stylesheet" href="/_teach/widget.css">' +
+  '<script src="/_teach/markdown.js" defer></script>' +
   '<script src="/_teach/widget.js" defer></script>';
 
 // Folders a lesson links to. Nothing else in the workspace is ever served.

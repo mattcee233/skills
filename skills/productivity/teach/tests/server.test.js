@@ -334,3 +334,17 @@ test('the identity endpoint used to find a leftover server answers loopback call
   assert.equal(viaNetwork.status, 404);
   return undefined;
 });
+
+test('the Markdown renderer is served and comes before the widget on an injected lesson page', async (t) => {
+  const { server } = await withServer(t, { 'lessons/0001-loops.html': '<!doctype html><html><body><h1>Loops</h1></body></html>' });
+
+  const script = await fetch(url(server, '/_teach/markdown.js'));
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get('content-type'), /^text\/javascript/);
+
+  const page = await (await fetch(url(server, '/lessons/0001-loops.html'))).text();
+  const markdown = page.indexOf('/_teach/markdown.js');
+  const widget = page.indexOf('/_teach/widget.js');
+  assert.ok(markdown !== -1 && widget !== -1, 'both scripts are injected');
+  assert.ok(markdown < widget, 'markdown.js first, so the widget can use it');
+});

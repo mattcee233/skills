@@ -245,6 +245,33 @@
     return node;
   }
 
+  // The teacher writes Markdown. It is shown formatted, built from DOM nodes by markdown.js (never as
+  // HTML), and falls back to the plain words if that script did not load.
+  function teacherMessage(text) {
+    var markdown = window.teachMarkdown;
+    if (markdown && typeof markdown.render === 'function') {
+      try {
+        var node = markdown.render(text, document);
+        node.className += ' teach-message teach-teacher';
+        return node;
+      } catch (err) {
+        // Fall through to the plain words.
+      }
+    }
+    return element('div', 'teach-message teach-teacher', text);
+  }
+
+  // The reply as words for the screen reader, without the Markdown marks.
+  function spokenReply(text) {
+    var markdown = window.teachMarkdown;
+    try {
+      if (markdown && typeof markdown.plain === 'function') return markdown.plain(text, document);
+    } catch (err) {
+      // Fall through to the words as written.
+    }
+    return text;
+  }
+
   function clock(seconds) {
     var minutes = Math.floor(seconds / 60);
     var rest = seconds % 60;
@@ -517,7 +544,7 @@
         } else if (entry.kind === 'fresh') {
           list.appendChild(element('div', 'teach-divider', 'Fresh start'));
         } else if (entry.kind === 'teacher') {
-          list.appendChild(element('div', 'teach-message teach-teacher', entry.text));
+          list.appendChild(teacherMessage(entry.text));
         } else if (entry.kind === 'error') {
           var block = element('div', 'teach-error');
           block.appendChild(element('strong', null, "Couldn't send (" + entry.code + ')'));
@@ -654,7 +681,7 @@
         saveThread(thread);
         if (!isOpen()) unread = true;
         render();
-        announce(polite, 'Your teacher replied: ' + result.text);
+        announce(polite, 'Your teacher replied: ' + spokenReply(result.text));
         returnFocus();
       } else {
         var error = (result && result.error) || {};
