@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { startServer } = require('../bridge/server');
 const { makeWorkspace, get } = require('./helpers');
 const { PASSING, fail, withHandshake, awaitVerdict, retryHandshake } = require('./handshake-helpers');
+const { sendMessage } = require('./chat-helpers');
 
 test('the interactive state carries exactly the permission text the adapter reported from check', async (t) => {
   const permissions = 'Reads and edits files in this workspace. Runs only the signalling command. No browser.';
@@ -23,12 +24,7 @@ test('the permission text a page is shown is the one from the latest check', asy
   await awaitVerdict(server);
   // A setup error on send ends the session; the next handshake reports whatever the adapter says now.
   adapter.setScript({ ...PASSING, check: { type: 'result', ok: true, permissions: 'Second words.' }, send: fail('not-logged-in') });
-  const sent = await fetch(`http://127.0.0.1:${server.port}/send`, {
-    method: 'POST',
-    headers: { 'X-Teach-Token': server.token, 'X-Teach-Tab': 'tab-holder', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: 'm1', lesson: '/lessons/0001-loops.html', text: 'hi' }),
-  });
-  assert.equal(sent.status, 202);
+  assert.equal((await sendMessage(server, { text: 'hi' })).status, 202);
   await awaitVerdict(server, (s) => s.state === 'static');
 
   await retryHandshake(server);
@@ -52,11 +48,7 @@ test('a connector marked improvised is reported as improvised once it is interac
   assert.equal(state.improvised, true);
 
   adapter.setScript({ ...PASSING, send: fail('not-logged-in') });
-  await fetch(`http://127.0.0.1:${server.port}/send`, {
-    method: 'POST',
-    headers: { 'X-Teach-Token': server.token, 'X-Teach-Tab': 'tab-holder', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: 'm1', lesson: '/lessons/0001-loops.html', text: 'hi' }),
-  });
+  await sendMessage(server, { text: 'hi' });
   await awaitVerdict(server, (s) => s.state === 'static');
   adapter.setScript(PASSING);
   await retryHandshake(server);

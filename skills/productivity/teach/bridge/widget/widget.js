@@ -137,8 +137,6 @@
     document.dispatchEvent(new CustomEvent('teach:event', { detail: { type: type, data: payload } }));
   }
 
-  // EventSource cannot send a header, so read the stream with fetch to keep the token
-  // out of the URL.
   // The page from an earlier session finds nothing at its address, or a different server that does not
   // know its token. Two failures in a row (or a refused token) say the teaching server is gone.
   var FAILURES_BEFORE_DEAD = 2;
@@ -147,7 +145,10 @@
     document.dispatchEvent(new CustomEvent('teach:stream', { detail: { state: state } }));
   }
 
+  // EventSource cannot send a header, so read the stream with fetch to keep the token
+  // out of the URL.
   function connect(token, tab, delay, failures) {
+    var wasOpen = false;
     setStream('connecting');
     fetch('/events', { headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab } })
       .then(function (response) {
@@ -158,6 +159,7 @@
         }
         if (!response.ok) throw new Error('stream refused');
         setStream('open');
+        wasOpen = true;
         tellStream('open');
         var reader = response.body.getReader();
         var decoder = new TextDecoder();
@@ -173,13 +175,13 @@
           });
         }
         return pump().then(function () {
-          failures = -1;
           throw new Error('stream ended');
         });
       })
       .catch(function () {
         setStream('closed');
-        var failed = (failures || 0) + 1;
+        // A stream that was open and then ended starts the count again: it is a drop, not a dead server.
+        var failed = wasOpen ? 0 : (failures || 0) + 1;
         if (failed >= FAILURES_BEFORE_DEAD) tellStream('lost');
         setTimeout(function () {
           connect(token, tab, Math.min(delay * 2, 10000), failed);
@@ -372,14 +374,18 @@
       return query ? query.matches : true;
     }
 
+    function layoutName() {
+      return isWide() ? 'wide' : 'narrow';
+    }
+
     function isOpen() {
-      return isOpenIn[isWide() ? 'wide' : 'narrow'];
+      return isOpenIn[layoutName()];
     }
 
     function applyLayout() {
       var wide = isWide();
       var open = isOpen();
-      root.setAttribute('data-layout', wide ? 'wide' : 'narrow');
+      root.setAttribute('data-layout', layoutName());
       root.setAttribute('data-open', open ? 'true' : 'false');
       document.documentElement.setAttribute('data-teach-dock', chatShown && wide && open ? 'open' : 'closed');
       document.documentElement.setAttribute('data-teach-bar', chatShown && !wide ? 'on' : 'off');
@@ -389,7 +395,7 @@
     }
 
     function setOpen(value) {
-      isOpenIn[isWide() ? 'wide' : 'narrow'] = value;
+      isOpenIn[layoutName()] = value;
       if (value) unread = false;
       applyLayout();
       renderStatus();
