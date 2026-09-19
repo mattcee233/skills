@@ -6,6 +6,26 @@ Reference document for `/teach` interactive mode setup.
 
 Teaching workspaces can operate in **interactive mode** (served via a local web server with live widgets and agent chat) or **plain files mode** (HTML files opened locally).
 
+## Scripts
+
+Interactive mode is driven by a few small Node programs. You run them; each prints one JSON line (or, for the launcher, one sentence) and exits, except `session.js start`, which keeps serving.
+
+**Where they are.** `<skill>` means the folder that holds `SKILL.md` (the one this file is in). Resolve it again on every invocation and never reuse an earlier path, because a plugin update can move it. Every shipped script is in `<skill>/bridge/`. Exactly one script lives in the learner's workspace: the launcher `.teach/signal.js`, a copy that setup installs. Run every command from the workspace root, as `node <skill>/bridge/<script>.js ...` or `node .teach/signal.js ...`.
+
+| Script | Lives in | Run it when | What it does |
+| --- | --- | --- | --- |
+| `setup.js` (commands: `setup`, `reset`, `check-node`, `status`) | `<skill>/bridge/` | Once per workspace, after the learner says yes to interactive mode; again for `/teach interactive` (`reset`) | Prepares the workspace: checks Node, writes `.teach/config.json` and `.teach/.gitignore`, copies the launcher to `.teach/signal.js`, and adds the "Teaching signals" block to `AGENTS.md` and the `@AGENTS.md` import to `CLAUDE.md`. It starts nothing. |
+| `session.js` (commands: `notice`, `detect`, `bind`, `start`) | `<skill>/bridge/` | At the start of every `/teach` in an interactive workspace, in that order | Reads the recorded outcome, resolves which harness you are in, decides the address question, then starts the server, waits for the connection verdict and prints the link. See Starting a Session below. |
+| `discovery.js` (commands: `assess`, `decline`, `login-failed`) | `<skill>/bridge/` | When the harness's CLI may be missing or logged out | Finds the CLI, checks its login where a free check exists, and gives the install or login steps for the learner to run. Records a decline or a failed login. See Missing CLI or Lapsed Login below. |
+| `improvised.js` (commands: `find`, `scaffold`, `decline`) | `<skill>/bridge/` | Only in an unrecognised harness (`other`) | Finds, or writes a starting point for, a connector kept in `.teach/adapters/`. See [IMPROVISED-ADAPTERS.md](./IMPROVISED-ADAPTERS.md). |
+| `signal.js` (commands: `next-lesson`, `reload`, `status`, `retry`) | The workspace, as `.teach/signal.js` | While a server is running: after you write or change a lesson, to read the connection state, and for "check again" | Tells the open lesson page something changed, or asks the running server for its state or to test the connection again. It is a copy of `<skill>/bridge/signal.js` that setup installs, and it holds no secret. Do not edit it. |
+
+`setup.js` and `signal.js` are easy to confuse. `setup.js` runs once to get a workspace ready and installs the launcher; `signal.js` is that launcher, and is what you run during lessons. If `.teach/signal.js` is missing, setup has not run in this copy of the workspace: do not signal.
+
+You never run the other files in `bridge/`. They are the server and its parts (`server.js`, `chat.js`, `handshake.js`, `lease.js`, `signals.js`, `profiles.js`, `lesson.js`, `teaching-signals.js`, `flags.js`), `serve.js` (a bare server starter that `session.js start` replaces, used by tests), the connectors in `bridge/adapters/`, and the page widget in `bridge/widget/`. Start the server only with `session.js start`.
+
+**Which lesson the link opens.** `session.js start` builds the link to the newest lesson file in `lessons/`, by file name (lessons are numbered, like `0002-recursion.html`). Pass `--lesson lessons/<file>.html` to open a different one. With no lesson file yet the link has nothing to open, so write the first lesson before starting the server. After that the server keeps serving from disk: a later lesson needs a `next-lesson` signal so the open page can show its button, and the first lesson needs no signal because the page opens on it. A lesson you change while the learner is reading it needs a `reload` signal.
+
 ## Flow in a New Workspace
 
 1. **Mission Interview First**: The existing mission interview runs first, unchanged.
