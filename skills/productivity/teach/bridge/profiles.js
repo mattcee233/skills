@@ -29,7 +29,7 @@ const PROFILES = {
   pithagoras: {
     id: 'pithagoras',
     adapter: [process.execPath, path.join(__dirname, 'adapters', 'pithagoras.js')],
-    remote: false,
+    remote: true,
     cli: 'pi',
     installHint: 'Install the pi CLI and make sure it is on your PATH, then press Retry.',
     loginHint: 'Run pi and use /login, or set your provider API key, then press Retry.',

@@ -451,11 +451,11 @@ test('conformance check transitions to static with the login hint when the prime
 // ---------------------------------------------------------------------------
 // Profile table entry
 // ---------------------------------------------------------------------------
-test('profile table gains the pithagoras entry (adapter, remote: false, cli: pi)', () => {
+test('profile table gains the pithagoras entry (adapter, remote, cli: pi)', () => {
   const profile = getProfile('pithagoras');
   assert.ok(profile, 'profile exists for pithagoras');
   assert.equal(profile.id, 'pithagoras');
-  assert.equal(profile.remote, false);
+  assert.equal(profile.remote, true);
   assert.equal(profile.cli, 'pi');
   assert.ok(profile.installHint);
   assert.ok(profile.loginHint);
