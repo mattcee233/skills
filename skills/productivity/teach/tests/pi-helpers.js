@@ -1,5 +1,5 @@
 'use strict';
-// Test helper: creates and configures an isolated stub `pi` executable for Pithagoras adapter testing.
+// Test helper: creates and configures an isolated stub `pi` executable for pi adapter testing.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -49,5 +49,4 @@ function makeStubPi(t, initialConfig = {}) {
 
 module.exports = {
   makeStubPi,
-  makeStubPithagoras: makeStubPi,
 };

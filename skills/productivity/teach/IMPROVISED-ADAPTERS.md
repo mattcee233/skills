@@ -4,7 +4,7 @@ Reference guide for `/teach` when running inside an unrecognised agent harness (
 
 ## Overview
 
-The `teach` skill includes shipped adapters for `claude-code`, `antigravity`, and `pithagoras`. When running inside an unrecognised harness, the skill can offer to improvise a custom connector so the learner can use interactive chat from their browser lessons.
+The `teach` skill includes shipped adapters for `claude-code`, `antigravity`, and `pi` (which also serves `pithagoras`). When running inside an unrecognised harness, the skill can offer to improvise a custom connector so the learner can use interactive chat from their browser lessons.
 
 The agent improvises **only the adapter**. The shipped server continues to handle token generation, HTTP and SSE serving, port binding, lesson rendering, widget injection, and the interactive lease.
 

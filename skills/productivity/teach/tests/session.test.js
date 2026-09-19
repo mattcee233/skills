@@ -703,3 +703,69 @@ test('the server binds exactly as chosen: this computer only listens on loopback
   assert.deepEqual(lan.server.addresses.map((a) => a.address), ['127.0.0.1', address]);
   assert.ok(lan.url.startsWith(`http://${address}:`), lan.url);
 });
+
+// ---------------------------------------------------------------------------
+// pi and Pithagoras are different harnesses. pi sets PI_* in its agent's shell (verified on pi
+// 0.85); only a Pithagoras instance adds AGENT_HOME, CHANNELS_DIR, WORKSPACE_ROOT and PORTAL_*.
+// ---------------------------------------------------------------------------
+const PLAIN_PI_ENV = {
+  PI_CODING_AGENT: 'true',
+  PI_SESSION_ID: 'sess-1',
+  PI_PROVIDER: 'llama.cpp',
+  PI_MODEL: 'some-model',
+  PI_REASONING_LEVEL: 'medium',
+};
+const PITHAGORAS_ENV = { ...PLAIN_PI_ENV, AGENT_HOME: '/opt/pithagoras', CHANNELS_DIR: '/data/channels', WORKSPACE_ROOT: '/data/ws', PORTAL_URL: 'http://x' };
+
+test('detectHarness resolves pi from its own PI_* variables, as a local harness', () => {
+  const result = detectHarness({ selfReport: { harness: 'pi', reason: 'I am the pi coding agent in a terminal.' }, env: PLAIN_PI_ENV });
+  assert.equal(result.resolved, true);
+  assert.equal(result.harness, 'pi');
+  assert.equal(result.profile.id, 'pi');
+  assert.equal(result.profile.remote, false);
+  assert.match(result.assumption, /^Assuming pi \(/);
+});
+
+test('detectHarness tells pi and Pithagoras apart, and asks when the answer and the environment disagree', () => {
+  // Pithagoras carries the PI_* variables too, so it resolves with them present.
+  const pithagoras = detectHarness({ selfReport: { harness: 'pithagoras', reason: 'Skills live under /opt/pithagoras.' }, env: PITHAGORAS_ENV });
+  assert.equal(pithagoras.resolved, true);
+  assert.equal(pithagoras.profile.remote, true);
+
+  // Claims pi, but the environment is a Pithagoras instance.
+  const piInPithagoras = detectHarness({ selfReport: { harness: 'pi', reason: 'pi coding agent' }, env: PITHAGORAS_ENV });
+  assert.equal(piInPithagoras.resolved, false);
+  assert.equal(piInPithagoras.conflict, true);
+  assert.equal(piInPithagoras.question, QUESTION_HARNESS);
+
+  // Claims Pithagoras, but the environment is plain pi (PI_* and nothing of Pithagoras).
+  const pithagorasInPi = detectHarness({ selfReport: { harness: 'pithagoras', reason: 'pi coding agent' }, env: PLAIN_PI_ENV });
+  assert.equal(pithagorasInPi.resolved, false);
+  assert.equal(pithagorasInPi.conflict, true);
+
+  // Other harnesses do not accept pi's variables either.
+  assert.equal(detectHarness({ selfReport: { harness: 'claude-code' }, env: PLAIN_PI_ENV }).conflict, true);
+  assert.equal(detectHarness({ selfReport: { harness: 'antigravity' }, env: PLAIN_PI_ENV }).conflict, true);
+  assert.equal(detectHarness({ selfReport: { harness: 'pi' }, env: { CLAUDECODE: '1' } }).conflict, true);
+});
+
+test('the harness question names pi and Pithagoras separately', () => {
+  assert.match(QUESTION_HARNESS, /Pithagoras/);
+  assert.match(QUESTION_HARNESS, /\bpi\b/);
+});
+
+test('a local pi session defaults to this computer only, unlike Pithagoras', async () => {
+  const { determineBindOptions } = require('../bridge/session');
+  const { getProfile } = require('../bridge/profiles');
+  const pi = determineBindOptions({ profile: getProfile('pi'), addresses: ['192.168.1.50'] });
+  assert.equal(pi.defaultChoice, 'loopback');
+  assert.equal(pi.canOfferLoopback, true);
+  const pithagoras = determineBindOptions({ profile: getProfile('pithagoras'), addresses: ['192.168.1.50'] });
+  assert.equal(pithagoras.canOfferLoopback, false);
+});
+
+test('other tools PI_ variables are not read as pi markers', () => {
+  const env = { CLAUDECODE: '1', PI_HOLE_WEB_PORT: '8080', PI_HOME: '/home/pi' };
+  const result = detectHarness({ selfReport: { harness: 'claude-code', reason: 'CLAUDECODE is set.' }, env });
+  assert.equal(result.resolved, true);
+});

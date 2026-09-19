@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
-// The Pithagoras bridge adapter: talks to the learner's own `pi` CLI via child_process.
+// The pi bridge adapter: talks to the learner's own `pi` CLI via child_process.
 // Implements check, prime and send according to the adapter contract:
 // reads one JSON request on stdin, writes one JSON line on stdout.
-//   node pithagoras.js [--cli <path-or-json-array>] [--timeout <ms>]
+//   node pi.js [--cli <path-or-json-array>] [--timeout <ms>]
 //
 // Web research goes through the `pi-web-access` package. Its search results must come
 // straight back to the agent, so every turn appends WEB_SEARCH_INSTRUCTION, which tells the
@@ -21,13 +21,13 @@ const WEB_SEARCH_INSTRUCTION =
   'When you call web_search, always pass workflow: "none" so the results come straight back to you. ' +
   'Never use the summary-review or auto-summary workflows, and never wait on a search curator.';
 
-const PITHAGORAS_PERMISSIONS_WEB =
+const PI_PERMISSIONS_WEB =
   "The agent runs with its process's full permissions and has no approval prompts. It can search the web and fetch pages through the pi-web-access package.";
 
-const PITHAGORAS_PERMISSIONS_NO_WEB =
+const PI_PERMISSIONS_NO_WEB =
   "The agent runs with its process's full permissions and has no approval prompts. Web research is not available because the pi-web-access package is not installed.";
 
-const PITHAGORAS_PERMISSIONS = PITHAGORAS_PERMISSIONS_NO_WEB;
+const PI_PERMISSIONS = PI_PERMISSIONS_NO_WEB;
 
 const DEFAULT_MESSAGES = {
   missing: 'pi CLI is not installed.',
@@ -291,7 +291,7 @@ async function handleCheck(cli, cwd, options) {
   return {
     type: 'result',
     ok: true,
-    permissions: hasWebAccess ? PITHAGORAS_PERMISSIONS_WEB : PITHAGORAS_PERMISSIONS_NO_WEB,
+    permissions: hasWebAccess ? PI_PERMISSIONS_WEB : PI_PERMISSIONS_NO_WEB,
     hasWebAccess,
   };
 }
@@ -341,9 +341,9 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PITHAGORAS_PERMISSIONS,
-  PITHAGORAS_PERMISSIONS_WEB,
-  PITHAGORAS_PERMISSIONS_NO_WEB,
+  PI_PERMISSIONS,
+  PI_PERMISSIONS_WEB,
+  PI_PERMISSIONS_NO_WEB,
   WEB_SEARCH_INSTRUCTION,
   DEFAULT_MESSAGES,
   DEFAULT_HINTS,

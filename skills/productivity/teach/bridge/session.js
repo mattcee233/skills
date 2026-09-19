@@ -8,11 +8,12 @@ const { getProfile } = require('./profiles');
 const { readConfig, writeConfig, teachDir } = require('./setup');
 const { startServer } = require('./server');
 
-const QUESTION_HARNESS = 'Which application or harness are you running inside: Claude Code, Antigravity, Pithagoras, or other?';
+const QUESTION_HARNESS = 'Which application or harness are you running inside: Claude Code, Antigravity, pi, Pithagoras, or other?';
 
 const DISPLAY_NAMES = {
   'claude-code': 'Claude Code',
   antigravity: 'Antigravity',
+  pi: 'pi',
   pithagoras: 'Pithagoras',
   other: 'Other',
 };
@@ -22,12 +23,20 @@ function hasClaudeCodeMarkers(env) {
   return env.CLAUDECODE === '1' || Boolean(env.CLAUDE_CODE_ENTRYPOINT) || Boolean(env.CLAUDE_CODE_SESSION_ATTENDED);
 }
 
+// The variables pi sets in the shell it gives its agent (checked on pi 0.85). A Pithagoras instance
+// runs pi, so it has these too. Named one by one: other tools' PI_ variables must not count.
+const PI_VARIABLES = ['PI_CODING_AGENT', 'PI_SESSION_ID', 'PI_SESSION_FILE', 'PI_PROVIDER', 'PI_MODEL', 'PI_REASONING_LEVEL'];
+
+function hasPiMarkers(env) {
+  if (!env || typeof env !== 'object') return false;
+  return PI_VARIABLES.some((key) => Boolean(env[key]));
+}
+
+// Only Pithagoras adds these; plain pi never sets them.
 function hasPithagorasMarkers(env) {
   if (!env || typeof env !== 'object') return false;
-  if (env.PI_SESSION_ID || env.PI_SESSION_FILE || env.PI_PROVIDER || env.AGENT_HOME || env.CHANNELS_DIR || env.WORKSPACE_ROOT) {
-    return true;
-  }
-  return Object.keys(env).some((key) => key.startsWith('PI_') || key.startsWith('PORTAL_'));
+  if (env.AGENT_HOME || env.CHANNELS_DIR || env.WORKSPACE_ROOT) return true;
+  return Object.keys(env).some((key) => key.startsWith('PORTAL_'));
 }
 
 function hasAntigravityMarkers(env) {
@@ -47,26 +56,28 @@ function detectHarness({ selfReport, env = process.env }) {
     return { resolved: false, inconclusive: true, question: QUESTION_HARNESS };
   }
 
-  const claudeMarker = hasClaudeCodeMarkers(env);
-  const pithagorasMarker = hasPithagorasMarkers(env);
-  const antigravityMarker = hasAntigravityMarkers(env);
-
-  // Check conflicts
-  if (reported === 'claude-code') {
-    if (pithagorasMarker || antigravityMarker) {
-      return { resolved: false, conflict: true, question: QUESTION_HARNESS };
-    }
-  } else if (reported === 'pithagoras') {
-    if (claudeMarker || antigravityMarker) {
-      return { resolved: false, conflict: true, question: QUESTION_HARNESS };
-    }
-  } else if (reported === 'antigravity') {
-    if (claudeMarker || pithagorasMarker) {
-      return { resolved: false, conflict: true, question: QUESTION_HARNESS };
-    }
-  } else {
+  const marked = {
+    'claude-code': hasClaudeCodeMarkers(env),
+    antigravity: hasAntigravityMarkers(env),
+    pi: hasPiMarkers(env),
+    pithagoras: hasPithagorasMarkers(env),
+  };
+  if (!Object.prototype.hasOwnProperty.call(marked, reported)) {
     // Unrecognised string reported
     return { resolved: false, inconclusive: true, question: QUESTION_HARNESS };
+  }
+
+  // A marker that belongs to a different harness is a disagreement. Pithagoras runs pi, so its
+  // pi markers are expected; but pi markers with none of Pithagoras's own mean plain pi, and
+  // Pithagoras's own markers mean it is not plain pi.
+  const conflicts = {
+    'claude-code': marked.antigravity || marked.pi || marked.pithagoras,
+    antigravity: marked['claude-code'] || marked.pi || marked.pithagoras,
+    pi: marked['claude-code'] || marked.antigravity || marked.pithagoras,
+    pithagoras: marked['claude-code'] || marked.antigravity || (marked.pi && !marked.pithagoras),
+  };
+  if (conflicts[reported]) {
+    return { resolved: false, conflict: true, question: QUESTION_HARNESS };
   }
 
   // Resolved!
@@ -488,6 +499,7 @@ module.exports = {
   QUESTION_HARNESS,
   DISPLAY_NAMES,
   hasClaudeCodeMarkers,
+  hasPiMarkers,
   hasPithagorasMarkers,
   hasAntigravityMarkers,
   getPrivateAddresses,

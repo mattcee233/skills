@@ -1,5 +1,5 @@
 'use strict';
-// Tests for the Pithagoras adapter: implements check, prime and send against a stub `pi`
+// Tests for the pi adapter: implements check, prime and send against a stub `pi`
 // CLI executable (modelled on the real pi CLI) according to the adapter contract.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -7,18 +7,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { makeWorkspace, openTab, HOLDER, get } = require('./helpers');
-const { makeStubPi } = require('./pithagoras-helpers');
+const { makeStubPi } = require('./pi-helpers');
 const { startServer } = require('../bridge/server');
 const { awaitVerdict } = require('./handshake-helpers');
 const { getProfile } = require('../bridge/profiles');
 const {
-  PITHAGORAS_PERMISSIONS_WEB,
-  PITHAGORAS_PERMISSIONS_NO_WEB,
+  PI_PERMISSIONS_WEB,
+  PI_PERMISSIONS_NO_WEB,
   WEB_SEARCH_INSTRUCTION,
   shimCommand,
-} = require('../bridge/adapters/pithagoras');
+} = require('../bridge/adapters/pi');
 
-const ADAPTER_PATH = path.join(__dirname, '..', 'bridge', 'adapters', 'pithagoras.js');
+const ADAPTER_PATH = path.join(__dirname, '..', 'bridge', 'adapters', 'pi.js');
 
 function runAdapter(workspace, cliString, request, options = {}) {
   return new Promise((resolve, reject) => {
@@ -68,7 +68,7 @@ test('check without pi-web-access says web research is unavailable', async (t) =
   const response = JSON.parse(stdout.trim());
   assert.equal(response.type, 'result');
   assert.equal(response.ok, true);
-  assert.equal(response.permissions, PITHAGORAS_PERMISSIONS_NO_WEB);
+  assert.equal(response.permissions, PI_PERMISSIONS_NO_WEB);
   assert.match(response.permissions, /full permissions/i);
   assert.match(response.permissions, /no approval prompts/i);
   assert.equal(response.hasWebAccess, false);
@@ -84,7 +84,7 @@ test('check with pi-web-access installed says the agent can search and fetch', a
   assert.equal(code, 0);
   const response = JSON.parse(stdout.trim());
   assert.equal(response.ok, true);
-  assert.equal(response.permissions, PITHAGORAS_PERMISSIONS_WEB);
+  assert.equal(response.permissions, PI_PERMISSIONS_WEB);
   assert.match(response.permissions, /pi-web-access/);
   assert.equal(response.hasWebAccess, true);
 
@@ -386,7 +386,7 @@ test('adapter passes the conformance runner against the stub CLI', async (t) => 
 
   const state = await awaitVerdict(server);
   assert.equal(state.state, 'interactive');
-  assert.equal(state.permissions, PITHAGORAS_PERMISSIONS_WEB);
+  assert.equal(state.permissions, PI_PERMISSIONS_WEB);
 
   // Verify chat send works through the server
   const sendRes = await fetch(`http://127.0.0.1:${server.port}/send`, {
@@ -451,19 +451,23 @@ test('conformance check transitions to static with the login hint when the prime
 // ---------------------------------------------------------------------------
 // Profile table entry
 // ---------------------------------------------------------------------------
-test('profile table gains the pithagoras entry (adapter, remote, cli: pi)', () => {
-  const profile = getProfile('pithagoras');
-  assert.ok(profile, 'profile exists for pithagoras');
-  assert.equal(profile.id, 'pithagoras');
-  assert.equal(profile.remote, true);
-  assert.equal(profile.cli, 'pi');
-  assert.ok(profile.installHint);
-  assert.ok(profile.loginHint);
+// Plain pi and Pithagoras are separate harnesses that share this one adapter: pi runs where the
+// learner sits (local), Pithagoras is driven from elsewhere (remote).
+for (const [id, remote] of [['pi', false], ['pithagoras', true]]) {
+  test(`profile table has the ${id} entry: this adapter, ${remote ? 'remote' : 'local'}, cli pi`, () => {
+    const profile = getProfile(id);
+    assert.ok(profile, `profile exists for ${id}`);
+    assert.equal(profile.id, id);
+    assert.equal(profile.remote, remote);
+    assert.equal(profile.cli, 'pi');
+    assert.ok(profile.installHint);
+    assert.ok(profile.loginHint);
 
-  assert.ok(Array.isArray(profile.adapter), 'adapter is a command array');
-  assert.equal(profile.adapter[0], process.execPath);
-  assert.equal(path.resolve(profile.adapter[1]), path.resolve(ADAPTER_PATH));
-});
+    assert.ok(Array.isArray(profile.adapter), 'adapter is a command array');
+    assert.equal(profile.adapter[0], process.execPath);
+    assert.equal(path.resolve(profile.adapter[1]), path.resolve(ADAPTER_PATH));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Windows npm shim: Node cannot spawn a .cmd without a shell

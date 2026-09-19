@@ -2,7 +2,7 @@
 // Profile table for supported harnesses. Each entry specifies:
 // - id: harness identifier
 // - adapter: command array to run the adapter program
-// - remote: boolean (true if remote like Pithagoras, false if local like Claude Code/Antigravity)
+// - remote: boolean (true if remote like Pithagoras, false if local like pi, Claude Code and Antigravity)
 // - cli: CLI binary name
 // - installHint: guidance to install the CLI
 // - loginHint: guidance to authenticate
@@ -26,9 +26,20 @@ const PROFILES = {
       'Install the Antigravity CLI (agy) and restart your application, or check the known install folder (%LOCALAPPDATA%\\agy\\bin or ~/.local/bin), then press Retry.',
     loginHint: 'Start agy and run /login, then press Retry.',
   },
+  // Plain pi and Pithagoras share one adapter (the pi CLI). They differ in where the learner sits:
+  // pi runs beside the learner, Pithagoras is driven from elsewhere (Telegram, say), so its
+  // server must be reachable over the network.
+  pi: {
+    id: 'pi',
+    adapter: [process.execPath, path.join(__dirname, 'adapters', 'pi.js')],
+    remote: false,
+    cli: 'pi',
+    installHint: 'Install the pi CLI and make sure it is on your PATH, then press Retry.',
+    loginHint: 'Run pi and use /login, or set your provider API key, then press Retry.',
+  },
   pithagoras: {
     id: 'pithagoras',
-    adapter: [process.execPath, path.join(__dirname, 'adapters', 'pithagoras.js')],
+    adapter: [process.execPath, path.join(__dirname, 'adapters', 'pi.js')],
     remote: true,
     cli: 'pi',
     installHint: 'Install the pi CLI and make sure it is on your PATH, then press Retry.',
