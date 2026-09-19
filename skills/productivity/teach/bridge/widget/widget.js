@@ -21,6 +21,19 @@
     failed: 'Something went wrong. Try again.',
     lost: 'The teaching server restarted, so the reply was lost. Try again.',
   };
+  // What to say in the "Chat not connected" state when the adapter gave no guidance of its own,
+  // by the handshake's reason.
+  var CONNECT_FALLBACKS = {
+    missing: "The teacher's engine is not installed. Install it, then press Retry.",
+    'not-logged-in': "The teacher's engine is not logged in. Log in to it, then press Retry.",
+    unreachable: 'The teacher could not be reached. Check that it is running, then press Retry.',
+    unauthorised: "The teacher's engine refused its credentials. Check its connection settings, then press Retry.",
+    conformance: 'The connector did not pass its safety check, so chat is switched off. Press Retry, or run /teach interactive.',
+    'no-adapter': 'Chat is not set up for this workspace. Run /teach interactive to set it up.',
+    error: 'The connection test could not finish. Press Retry.',
+    timeout: 'The connection test took too long. Press Retry.',
+    other: 'The connection test did not finish. Press Retry.',
+  };
   var RETRYABLE = { timeout: true, failed: true, unreachable: true, lost: true };
 
   // The server puts the session token in the URL fragment, which the browser never sends
@@ -110,6 +123,7 @@
   //   { kind: 'you', id, text, lesson, title, sentAt, status: 'pending' | 'done' | 'failed' }
   //   { kind: 'teacher', text }
   //   { kind: 'error', forId, code, message, hint }
+  //   { kind: 'fresh', generation }   (the agent conversation was started again)
 
   function loadThread() {
     try {
@@ -188,7 +202,6 @@
     panel.appendChild(form);
     var root = document.getElementById('teach-widget');
     root.appendChild(panel);
-    document.documentElement.setAttribute('data-teach-chat', 'on');
 
     var pollTimer = null;
     var pollFailures = 0;
@@ -230,6 +243,8 @@
             lastLesson = entry.lesson;
           }
           list.appendChild(element('div', 'teach-message teach-you', entry.text));
+        } else if (entry.kind === 'fresh') {
+          list.appendChild(element('div', 'teach-divider', 'Fresh start'));
         } else if (entry.kind === 'teacher') {
           list.appendChild(element('div', 'teach-message teach-teacher', entry.text));
         } else if (entry.kind === 'error') {
@@ -402,6 +417,127 @@
     setInterval(renderStatus, 1000);
     render();
     if (pendingMessage()) poll();
+
+    // What the connection state does with the chat: show it, hide it (the thread is kept, in
+    // memory and in localStorage), and mark a new agent conversation.
+    return {
+      show: function () {
+        panel.hidden = false;
+        document.documentElement.setAttribute('data-teach-chat', 'on');
+      },
+      hide: function () {
+        panel.hidden = true;
+        document.documentElement.setAttribute('data-teach-chat', 'off');
+      },
+      freshStart: function (generation) {
+        var seen = thread.some(function (entry) {
+          return entry.kind === 'fresh' && entry.generation === generation;
+        });
+        if (seen || !thread.length) return;
+        thread.push({ kind: 'fresh', generation: generation });
+        saveThread(thread);
+        render();
+      },
+    };
+  }
+
+  // ---- The connection state ---------------------------------------------------------------
+  // The server tests its connection to the agent after the page is served. Until it says how it
+  // went the widget shows "Connecting...". Then either live chat, or a collapsed "Chat not
+  // connected" pill: opened, it shows the adapter's hint and a Retry button, with no message box
+  // and no permission notice. Retry runs the test again on the server, and success switches this
+  // same widget to live chat with no reload. The thread is kept whichever way it goes.
+
+  function startConnection(token, root) {
+    var chat = null;
+    var verdict = { state: 'pending' };
+    var expanded = false;
+    var retryProblem = '';
+
+    var gate = element('div', 'teach-pill');
+    var toggle = element('button', 'teach-pill-toggle');
+    toggle.type = 'button';
+    var detail = element('div', 'teach-pill-detail');
+    gate.appendChild(toggle);
+    gate.appendChild(detail);
+    root.appendChild(gate);
+    toggle.addEventListener('click', function () {
+      expanded = !expanded;
+      renderGate();
+    });
+
+    function hintFor(state) {
+      if (state.hint) return state.hint;
+      var reason = state.state === 'error' ? 'error' : state.reason;
+      return CONNECT_FALLBACKS[reason] || CONNECT_FALLBACKS.other;
+    }
+
+    function renderGate() {
+      if (verdict.state === 'interactive') {
+        gate.hidden = true;
+        return;
+      }
+      gate.hidden = false;
+      gate.setAttribute('data-state', verdict.state);
+      detail.textContent = '';
+      if (verdict.state === 'pending') {
+        toggle.textContent = 'Connecting...';
+        toggle.disabled = true;
+        toggle.setAttribute('aria-expanded', 'false');
+        detail.hidden = true;
+        return;
+      }
+      toggle.textContent = 'Chat not connected';
+      toggle.disabled = false;
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      detail.hidden = !expanded;
+      detail.appendChild(element('p', null, hintFor(verdict)));
+      if (retryProblem) detail.appendChild(element('p', 'teach-pill-problem', retryProblem));
+      var retry = element('button', 'teach-retry', 'Retry');
+      retry.type = 'button';
+      retry.addEventListener('click', function () {
+        retry.disabled = true;
+        retryConnection();
+      });
+      detail.appendChild(retry);
+    }
+
+    function apply(next) {
+      if (!next || typeof next.state !== 'string') return;
+      verdict = next;
+      retryProblem = '';
+      if (next.state === 'interactive') {
+        if (!chat) chat = startChat(token);
+        chat.show();
+        if (typeof next.generation === 'number' && next.generation > 1) chat.freshStart(next.generation);
+      } else if (chat) {
+        chat.hide();
+      }
+      renderGate();
+    }
+
+    function retryConnection() {
+      var before = verdict;
+      fetch('/retry', { method: 'POST', headers: { 'X-Teach-Token': token, 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (response) {
+          if (response.status === 401) throw new Error('unauthorised');
+          return response.json();
+        })
+        .then(function (next) {
+          // The stream usually gets there first; a slower answer must not overwrite a newer state.
+          if (verdict === before) apply(next);
+        })
+        .catch(function () {
+          retryProblem = 'Could not reach the teaching server. Run /teach for a fresh link.';
+          renderGate();
+        });
+    }
+
+    // The server sends the current state when the stream opens, and again on every change.
+    document.addEventListener('teach:event', function (event) {
+      if (event.detail.type === 'handshake') apply(event.detail.data);
+    });
+    renderGate();
   }
 
   function start() {
@@ -415,7 +551,7 @@
       return;
     }
     connect(token, 1000);
-    startChat(token);
+    startConnection(token, root);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

@@ -4,6 +4,10 @@
 //   node tests/dev-server.js
 // It prints the lesson URL (token in the fragment) and the path of the script file that
 // controls the fake adapter: edit that file to make the next reply slow, an error, and so on.
+// The handshake runs at start: the fake adapter's check is slow and fails at first ("not
+// logged in"), so the page goes Connecting..., then Chat not connected. Change "check" in the
+// script to {"type":"result","ok":true,"permissions":"..."} and press Retry to see live chat.
+//   node tests/dev-server.js connected   starts with a session already given (no handshake)
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -25,10 +29,13 @@ async function main() {
   fs.writeFileSync(path.join(workspace, 'lessons', '0002-lists.html'), page(2, 'Lists'));
 
   const adapter = fakeAdapter({
+    check: { type: 'result', ok: false, error: { code: 'not-logged-in', message: 'Not logged in.', hint: 'Run claude auth login in a terminal, then press Retry.' } },
+    prime: { type: 'result', ok: true, session: 'dev-session' },
     send: { type: 'result', ok: true, text: 'A loop repeats a step.\nThat is all it does.' },
-    delayMs: { send: 3000 },
+    delayMs: { check: 1500, send: 3000 },
   });
-  const server = await startServer({ workspace, bind: { mode: 'loopback' }, adapter: adapter.command, session: 'dev-session' });
+  const session = process.argv[2] === 'connected' ? 'dev-session' : null;
+  const server = await startServer({ workspace, bind: { mode: 'loopback' }, adapter: adapter.command, session });
 
   const scriptPath = adapter.command[2];
   process.stdout.write(`${JSON.stringify({ url: `http://127.0.0.1:${server.port}/lessons/0001-loops.html#t=${server.token}`, script: scriptPath })}\n`);

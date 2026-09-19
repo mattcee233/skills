@@ -7,6 +7,8 @@ const { spawn } = require('node:child_process');
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_TEXT_LENGTH = 20000;
 const MAX_NOTE_LENGTH = 300;
+// Errors that mean the engine cannot be used until the learner fixes something.
+const SETUP_CODES = new Set(['missing', 'not-logged-in', 'unauthorised']);
 const QUEUE_CAP = 3;
 const SEND_TIMEOUT_MS = 16 * 60 * 1000;
 const RESULT_TTL_MS = 60 * 60 * 1000;
@@ -50,14 +52,14 @@ function failure(code, message = DEFAULT_MESSAGES[code]) {
 
 // Learner-facing text from an adapter: a string, plain text (no markup), short. Control
 // characters are removed and line breaks become spaces. Anything else is dropped (null).
-function plainText(value) {
+function plainText(value, maxLength = MAX_NOTE_LENGTH) {
   if (typeof value !== 'string') return null;
   const text = value
     .replace(/[\t\n\r]+/g, ' ')
     .replace(CONTROL_CHARACTERS, '')
     .replace(/ {2,}/g, ' ')
     .trim();
-  if (!text || text.length > MAX_NOTE_LENGTH || /<[A-Za-z/!?]/.test(text)) return null;
+  if (!text || text.length > maxLength || /<[A-Za-z/!?]/.test(text)) return null;
   return text;
 }
 
@@ -96,7 +98,7 @@ function readResult(output) {
 // directory, scrubbed environment, arguments as an array, one JSON request on stdin, one JSON
 // line back. The server owns the deadline: at expiry the child is killed and the call reports
 // "timeout".
-function runAdapter({ command, cwd, request, timeoutMs, running }) {
+function runAdapter({ command, cwd, request, timeoutMs, running, parse = readResult }) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -105,11 +107,12 @@ function runAdapter({ command, cwd, request, timeoutMs, running }) {
       resolve(failure('failed'));
       return;
     }
+    // Kept until the process has really gone, so a server that is closing can wait for it.
     running.add(child);
+    child.once('close', () => running.delete(child));
     let output = '';
     const finish = (result) => {
       clearTimeout(deadline);
-      running.delete(child);
       resolve(result);
     };
     const deadline = setTimeout(() => {
@@ -125,7 +128,7 @@ function runAdapter({ command, cwd, request, timeoutMs, running }) {
       }
     });
     child.on('error', () => finish(failure('failed')));
-    child.on('close', () => finish(readResult(output)));
+    child.on('close', () => finish(parse(output)));
     child.stdin.on('error', () => {});
     child.stdin.end(JSON.stringify(request));
   });
@@ -138,6 +141,8 @@ function createChat({
   resolveLesson,
   sendTimeoutMs = SEND_TIMEOUT_MS,
   resultTtlMs = RESULT_TTL_MS,
+  running = new Set(),
+  onSetupError = () => {},
 }) {
   let session = null;
   // Results by message id: { status: 'pending' }, { status: 'done', result, doneAt } or, once
@@ -146,13 +151,14 @@ function createChat({
   // One queue per session identity: sends for a session run one at a time, and different
   // sessions run in parallel.
   const queues = new Map();
-  const running = new Set();
 
   // Never throws: whatever goes wrong becomes the message's result, so a queue cannot stall.
   async function run(id, identity, lesson, text) {
     let result;
     try {
-      result = identity
+      // A message that was waiting when its conversation ended (the engine became unavailable, or
+      // was primed again) is not sent into the old one.
+      result = identity && identity === session
         ? await runAdapter({
             command: adapter,
             cwd: workspace,
@@ -165,6 +171,7 @@ function createChat({
       result = failure('failed');
     }
     messages.set(id, { status: 'done', result, doneAt: Date.now() });
+    if (!result.ok && SETUP_CODES.has(result.error.code) && identity === session) onSetupError(result.error);
   }
 
   function dropExpired() {
@@ -213,10 +220,19 @@ function createChat({
       messages.set(id, { status: 'fetched', doneAt: entry.doneAt });
       return { status: 'done', result: entry.result };
     },
-    close() {
-      for (const child of running) child.kill();
+    // Kills every adapter still running and waits until each has exited. It waits for the exit,
+    // not for the output pipes to close: a grandchild holding a pipe must not stall the server.
+    async close() {
+      await Promise.all(
+        [...running].map((child) => {
+          if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+          const exited = new Promise((done) => child.once('exit', done));
+          child.kill();
+          return exited;
+        }),
+      );
     },
   };
 }
 
-module.exports = { createChat, failure };
+module.exports = { createChat, runAdapter, failure, plainText, DEFAULT_MESSAGES };

@@ -7,6 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const net = require('node:net');
 const { createChat, failure } = require('./chat');
+const { createHandshake } = require('./handshake');
 
 const WIDGET_DIR = path.join(__dirname, 'widget');
 const WIDGET_TAGS =
@@ -282,15 +283,18 @@ function writeState(dir, state) {
   fs.renameSync(temporary, file);
 }
 
-async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs }) {
+async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs }) {
   const root = fs.realpathSync(workspace);
   const stateDir = path.join(root, STATE_DIR);
   const stateFile = path.join(stateDir, STATE_FILE);
   await stopLeftover(stateFile);
   const token = crypto.randomBytes(32).toString('hex');
   const streams = new Set();
+  const running = new Set();
   const chat = createChat({
     workspace: root,
+    running,
+    onSetupError: (error) => handshake.markUnavailable(error),
     adapter,
     sendTimeoutMs,
     resultTtlMs,
@@ -301,17 +305,24 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
   });
   chat.setSession(session);
 
+  const frameOf = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
   const openStream = (res) => {
     res.writeHead(200, baseHeaders({ 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive' }));
     res.write(': connected\n\n');
+    // A page that connects late, or a tier 2 page, still learns how the handshake went.
+    res.write(frameOf('handshake', handshake.state));
     streams.add(res);
     res.on('close', () => streams.delete(res));
   };
 
   const broadcast = (event, data) => {
-    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const frame = frameOf(event, data);
     for (const res of streams) res.write(frame);
   };
+
+  const handshake = createHandshake({ workspace: root, adapter, session, running, setSession: chat.setSession, broadcast, checkTimeoutMs, primeTimeoutMs });
+  handshake.start();
 
   const heartbeat = setInterval(() => {
     for (const res of streams) res.write(': heartbeat\n\n');
@@ -327,6 +338,11 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
         sendJson(res, outcome.status, outcome.body);
       });
     }
+    if (req.method === 'POST' && rawPath === '/retry') {
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      handshake.retry();
+      return sendJson(res, 202, handshake.state);
+    }
     if (req.method === 'POST') return sendText(res, 404, 'Not found');
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return sendText(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
@@ -340,6 +356,10 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
         return sendText(res, 404, 'Not found');
       }
       return sendJson(res, 200, chat.lookup(id));
+    }
+    if (rawPath === '/handshake') {
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      return sendJson(res, 200, handshake.state);
     }
     if (rawPath === '/events') {
       if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
@@ -373,7 +393,8 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     async close() {
       if (readState(stateFile)?.pid === process.pid) fs.rmSync(stateFile, { force: true });
       clearInterval(heartbeat);
-      chat.close();
+      handshake.stop();
+      const adaptersGone = chat.close();
       for (const res of streams) res.end();
       await Promise.all(
         listeners.map((listener) => {
@@ -382,6 +403,7 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
           return closed;
         }),
       );
+      await adaptersGone;
     },
   };
 }

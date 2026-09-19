@@ -4,16 +4,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { reply, failure, withChat, replyTo } = require('./chat-helpers');
 
-test('each error code in the closed set reaches the page with its message and hint', async (t) => {
-  const { server, adapter } = await withChat(t, {});
-  for (const code of ['missing', 'not-logged-in', 'unreachable', 'unauthorised', 'timeout', 'in-use', 'failed']) {
-    adapter.setScript({ send: failure(code, { hint: `Fix for ${code}.` }) });
+// One server per code: an error that needs the learner's action (missing, not-logged-in,
+// unauthorised) ends the session for good, so codes cannot share one.
+for (const code of ['missing', 'not-logged-in', 'unreachable', 'unauthorised', 'timeout', 'in-use', 'failed']) {
+  test(`the "${code}" error code reaches the page with its message and hint`, async (t) => {
+    const { server } = await withChat(t, { send: failure(code, { hint: `Fix for ${code}.` }) });
     assert.deepEqual(await replyTo(server, `e-${code}`), {
       status: 'done',
       result: { ok: false, error: { code, message: `${code} happened`, hint: `Fix for ${code}.` } },
     });
-  }
-});
+  });
+}
 
 test('a code outside the closed set becomes "failed", and an error with no hint carries none', async (t) => {
   const { server, adapter } = await withChat(t, { send: failure('rate-limited') });

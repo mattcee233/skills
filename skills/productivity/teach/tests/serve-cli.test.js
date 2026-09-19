@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { makeWorkspace } = require('./helpers');
+const { fakeAdapter } = require('./fake-adapter-client');
 
 const SERVE = path.join(__dirname, '..', 'bridge', 'serve.js');
 
@@ -50,5 +51,37 @@ test('exits with an error when the workspace is missing or the bind mode is unkn
     const { code, stderr } = await run(args).exited();
     assert.notEqual(code, 0, args.join(' '));
     assert.notEqual(stderr.trim(), '');
+  }
+});
+
+test('given an adapter command, the server it starts runs the handshake with it', async (t) => {
+  const ws = makeWorkspace({ 'lessons/0001-x.html': '<html><body>x</body></html>' });
+  const adapter = fakeAdapter({
+    check: { type: 'result', ok: true, permissions: 'Reads files.' },
+    prime: { type: 'result', ok: true, session: 'cli-1' },
+  });
+  t.after(() => {
+    adapter.cleanup();
+    ws.cleanup();
+  });
+  const proc = run(['--workspace', ws.dir, '--bind', 'loopback', '--adapter', JSON.stringify(adapter.command)]);
+  t.after(() => proc.child.kill());
+
+  const info = JSON.parse(await proc.firstLine());
+  for (let waited = 0; ; waited += 50) {
+    const state = await (await fetch(`http://127.0.0.1:${info.port}/handshake`, { headers: { 'X-Teach-Token': info.token } })).json();
+    if (state.state === 'interactive') break;
+    assert.ok(waited < 5000, `still ${JSON.stringify(state)}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+});
+
+test('exits with an error when the adapter is not a JSON array of strings', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  for (const adapter of ['node adapter.js', '[]', '[1, 2]', '{"a": 1}']) {
+    const { code, stderr } = await run(['--workspace', ws.dir, '--bind', 'loopback', '--adapter', adapter]).exited();
+    assert.notEqual(code, 0, adapter);
+    assert.match(stderr, /--adapter/, adapter);
   }
 });
