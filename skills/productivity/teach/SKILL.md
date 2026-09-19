@@ -2,7 +2,7 @@
 name: teach
 description: Teach the user a new skill or concept, within this workspace.
 disable-model-invocation: true
-argument-hint: "What would you like to learn about?"
+argument-hint: "What would you like to learn about? Or 'interactive' to set up interactive mode."
 ---
 
 The user has asked you to teach them something. This is a stateful request - they intend to learn the topic over multiple sessions.
@@ -13,10 +13,12 @@ Treat the current directory as a teaching workspace. The state of their learning
 
 - `MISSION.md`: A document capturing the _reason_ the user is interested in the topic. This should be used to ground all teaching. Use the format in [MISSION-FORMAT.md](./MISSION-FORMAT.md).
 - `./reference/*.html`: A directory of reference materials. These are the compressed learnings from the lessons - cheat sheets, reference algorithms, syntax, yoga poses, glossaries. They are the raw units of learning. They should be beautiful documents which print out well, and are designed for quick reference.
+- `IMPROVISED-ADAPTERS.md`: Guide for creating custom connectors when running in an unrecognised harness. See [IMPROVISED-ADAPTERS.md](./IMPROVISED-ADAPTERS.md).
 - `RESOURCES.md`: A list of resources which can be explored to ground your teaching in contextual knowledge, or to acquire knowledge and wisdom. Use the format in [RESOURCES-FORMAT.md](./RESOURCES-FORMAT.md).
 - `./learning-records/*.md`: A directory of learning records, which capture what the user has learned. These are loosely equivalent to architectural decision records in software development - they capture non-obvious lessons and key insights that may need to be revised later, or drive future sessions. These should be used to calculate the zone of proximal development. They are titled `0001-<dash-case-name>.md`, where the number increments each time. Use the format in [LEARNING-RECORD-FORMAT.md](./LEARNING-RECORD-FORMAT.md).
 - `./lessons/*.html`: A directory of lessons. A **lesson** is a single, self-contained HTML output that teaches one tightly-scoped thing tied to the mission. This is the primary unit of teaching in this workspace.
 - `./assets/*`: Reusable **components** shared across lessons. See [Assets](#assets).
+- `.teach/*`: Machine-local configuration, launcher, and state for interactive mode. Self-ignored by `.teach/.gitignore`. See [INTERACTIVE-SETUP.md](./INTERACTIVE-SETUP.md).
 - `NOTES.md`: A scratchpad for you to jot down user preferences, or working notes.
 
 ## Philosophy
@@ -77,6 +79,16 @@ If the user is unclear about the mission, or the `MISSION.md` is not populated, 
 Failing to understand the mission will mean knowledge acquisition is not grounded in real-world goals. Lessons will feel too abstract. You will have no way of judging what the user should do next.
 
 Missions may change as the user develops more skills and knowledge. This is normal - make sure to update the `MISSION.md` and add a learning record to capture the change. Confirm with the user before changing the mission.
+
+## Interactive Mode
+
+The skill offers interactive lessons with a local web server, in-page widget, and live teacher chat.
+
+- **Interview and Consent**: In a new workspace (or when `.teach/` is absent), the mission interview runs first (unchanged). Once the mission is established, ask the learner a plain yes or no: *"Would you like interactive mode for these lessons?"*
+  - **No**: Skip technical steps, record `declined` in `.teach/config.json`, and provide plain files. Later invocations stay silent about interactive mode.
+  - **Yes**: Setup runs once per workspace before lesson one. Check `node --version` in the agent shell (Node 18+ required). Guide installation if missing or too old; if declined, record `no-node`. Write `.teach/config.json`, install the launcher (`.teach/signal.js`) and ignore file (`.teach/.gitignore`), and write the marked "Teaching signals" block into `AGENTS.md` and the import into `CLAUDE.md`.
+- **Reset and Re-run**: `/teach interactive` (a reserved first word) or a plain request resets the recorded outcome and re-runs setup without repeating the mission interview.
+- See [INTERACTIVE-SETUP.md](./INTERACTIVE-SETUP.md) for detailed reference and file schemas.
 
 ## Zone Of Proximal Development
 
