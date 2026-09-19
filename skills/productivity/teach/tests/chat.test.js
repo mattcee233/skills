@@ -4,8 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { post, get } = require('./helpers');
-const { HOLDER, reply, withChat, sendMessage, awaitReply } = require('./chat-helpers');
+const { HOLDER, post, get } = require('./helpers');
+const { reply, withChat, sendMessage, awaitReply } = require('./chat-helpers');
 
 test('a message from the page reaches the adapter after one "sent from" line, and the reply comes back', async (t) => {
   const { server, adapter } = await withChat(t, { send: reply('Loops repeat things.') });

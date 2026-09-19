@@ -236,12 +236,12 @@
 
   // What the page says about the lease when it does not hold it.
   var LEASE_NOTICES = {
-    'not-interactive': 'AI interaction is only available on one page at a time, and you already have another page open.',
+    'not-interactive': 'AI interaction is only available on one page at a time and you already have another page open.',
     displaced: 'Another page took over AI interaction.',
-    free: 'The other page has closed. You can use AI interaction on this page.',
+    free: 'The other page has closed, so AI interaction is free.',
   };
 
-  function startChat(token, tab, takeLease) {
+  function startChat(token, tab, hooks) {
     var thread = loadThread();
     var panel = element('section', 'teach-panel');
     panel.setAttribute('aria-label', 'Ask the teacher');
@@ -346,7 +346,7 @@
       var holds = lease === 'interactive';
       input.disabled = !!waiting || !holds;
       send.disabled = !!waiting || !holds;
-      input.placeholder = !holds ? 'Not available on this page' : waiting ? 'Waiting for your teacher...' : 'Ask a question, or ask for a change...';
+      input.placeholder = !holds ? 'Disabled on this page' : waiting ? 'Waiting for your teacher...' : 'Ask a question, or ask for a change...';
       renderStatus();
       renderNotice();
       list.scrollTop = list.scrollHeight;
@@ -369,9 +369,9 @@
 
     function takeLeaseNow() {
       leaseProblem = '';
-      takeLease().then(function (taken) {
-        if (!taken) {
-          leaseProblem = 'Could not reach the teaching server. Run /teach for a fresh link.';
+      hooks.takeLease().then(function (problem) {
+        if (problem) {
+          leaseProblem = problem;
           renderNotice();
         }
       });
@@ -427,6 +427,26 @@
       }
     }
 
+    // A reply is handed over once. If the server no longer knows a message, the page that held the lease
+    // a moment ago may have collected the reply and written it into the thread, so look there (for a
+    // moment, since that page may still be writing) before calling the message lost.
+    function settledElsewhere(message, tries) {
+      if (lease !== 'interactive') return;
+      thread = loadThread();
+      var saved = messageById(message.id);
+      if (saved && saved.status !== 'pending') {
+        render();
+        return;
+      }
+      if (tries < 3) {
+        pollTimer = setTimeout(function () {
+          settledElsewhere(message, tries + 1);
+        }, 400);
+        return;
+      }
+      fail(saved || message, 'lost', 'That message was lost.');
+    }
+
     // Ask the server for a message's outcome. A reloaded page does exactly this for a message
     // that was still pending when it went away.
     function poll() {
@@ -443,7 +463,7 @@
           return response.json().then(function (body) {
             pollFailures = 0;
             if (body.status === 'done') settle(message, body.result);
-            else if (body.status === 'unknown') fail(message, 'lost', 'That message was lost.');
+            else if (body.status === 'unknown') settledElsewhere(message, 0);
             else pollTimer = setTimeout(poll, POLL_MS);
           });
         })
@@ -481,7 +501,7 @@
             .then(function (body) {
               var error = (body && body.error) || {};
               // The server says another page holds the lease: believe it over what this page thought.
-              if (error.code === 'in-use') lease = 'not-interactive';
+              if (error.code === 'in-use') hooks.setLease('not-interactive');
               fail(message, error.code || 'failed', error.message || 'That message could not be sent.', error.hint);
             });
         })
@@ -646,7 +666,7 @@
       verdict = next;
       retryProblem = '';
       if (next.state === 'interactive') {
-        if (!chat) chat = startChat(token, tab, takeLease);
+        if (!chat) chat = startChat(token, tab, { takeLease: takeLease, setLease: setLease });
         chat.setLease(lease);
         chat.show();
         if (typeof next.generation === 'number' && next.generation > 1) chat.freshStart(next.generation);
@@ -678,15 +698,19 @@
       if (chat) chat.setLease(next);
     }
 
-    // Ask for the lease. Resolves to whether the server gave it.
+    // Ask for the lease. Resolves to null when the server gave it, otherwise to what to tell the learner.
     function takeLease() {
       return fetch('/lease/take', { method: 'POST', headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab, 'Content-Type': 'application/json' }, body: '{}' })
         .then(function (response) {
-          if (response.ok) setLease('interactive');
-          return response.ok;
+          if (response.ok) {
+            setLease('interactive');
+            return null;
+          }
+          if (response.status === 409) return 'This page is not connected to the teaching server yet. Try again in a moment.';
+          return 'Could not take over. Run /teach for a fresh link.';
         })
         .catch(function () {
-          return false;
+          return 'Could not reach the teaching server. Run /teach for a fresh link.';
         });
     }
 

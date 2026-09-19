@@ -2,8 +2,7 @@
 // Shared by the handshake tests: a real server that runs the start-of-session handshake
 // against a scripted fake adapter (no session given up front, so it must earn one).
 const { startServer } = require('../bridge/server');
-const { makeWorkspace, get, post, openTab } = require('./helpers');
-const { HOLDER } = require('./chat-helpers');
+const { HOLDER, makeWorkspace, get, post, openTab } = require('./helpers');
 const { fakeAdapter } = require('./fake-adapter-client');
 
 const ok = (extra = {}) => ({ type: 'result', ok: true, ...extra });

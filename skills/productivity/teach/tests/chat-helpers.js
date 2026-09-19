@@ -2,10 +2,7 @@
 // Shared by the chat tests: a real server with a scripted fake adapter behind it.
 const assert = require('node:assert/strict');
 const { startServer } = require('../bridge/server');
-const { makeWorkspace, post, get, openTab } = require('./helpers');
-
-// The page that holds the lease in the chat and handshake tests: they send as this tab.
-const HOLDER = 'tab-holder';
+const { HOLDER, makeWorkspace, post, get, openTab } = require('./helpers');
 const { fakeAdapter } = require('./fake-adapter-client');
 
 const LESSON = '<!doctype html><html><body><h1>Loops</h1></body></html>';
@@ -52,4 +49,4 @@ async function replyTo(server, id, message = {}) {
   return awaitReply(server, id);
 }
 
-module.exports = { HOLDER, LESSON, LESSON_PATH, reply, failure, withChat, sendMessage, awaitReply, replyTo };
+module.exports = { LESSON, LESSON_PATH, reply, failure, withChat, sendMessage, awaitReply, replyTo };

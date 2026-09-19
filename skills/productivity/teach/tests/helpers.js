@@ -87,6 +87,9 @@ function openTab(server, tab) {
   return openEvents(server, server.token, '127.0.0.1', tab);
 }
 
+// The tab the chat and handshake tests hold the lease as: they open it, then send as it.
+const HOLDER = 'tab-holder';
+
 const takeLease = (server, tab) => post(server, '/lease/take', {}, server.token, tab);
 
-module.exports = { makeWorkspace, openEvents, openTab, takeLease, url, post, get };
+module.exports = { HOLDER, makeWorkspace, openEvents, openTab, takeLease, url, post, get };
