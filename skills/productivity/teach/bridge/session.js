@@ -7,6 +7,7 @@ const os = require('node:os');
 const { getProfile } = require('./profiles');
 const { readConfig, writeConfig, teachDir } = require('./setup');
 const { startServer } = require('./server');
+const { parseFlags } = require('./flags');
 
 const QUESTION_HARNESS = 'Which application or harness are you running inside: Claude Code, Antigravity, pi, Pithagoras, or other?';
 
@@ -435,15 +436,6 @@ async function startSession({
     notice: start.notice,
     reply,
   };
-}
-
-function parseFlags(argv) {
-  const flags = {};
-  for (let i = 0; i < argv.length; i += 2) {
-    if (!argv[i].startsWith('--') || argv[i + 1] === undefined) throw new Error(`Expected "--name value", got "${argv[i]}"`);
-    flags[argv[i].slice(2)] = argv[i + 1];
-  }
-  return flags;
 }
 
 // What the agent runs. `detect`, `bind` and `notice` print one JSON line and exit. `start` prints

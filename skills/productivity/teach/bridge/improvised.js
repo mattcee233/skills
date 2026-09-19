@@ -3,6 +3,7 @@
 // Manages detection, configuration and template generation for workspace-local improvised connectors.
 const fs = require('node:fs');
 const path = require('node:path');
+const { parseFlags } = require('./flags');
 
 const UNREVIEWED_CONNECTOR_WARNING =
   'This connector was written by an AI for this workspace and has not been reviewed. Check what it does before you rely on it.';
@@ -210,7 +211,83 @@ main().catch((err) => {
 `;
 }
 
+const ADAPTER_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+function parseEngineCli(text) {
+  let command;
+  try {
+    command = JSON.parse(text);
+  } catch {
+    command = null;
+  }
+  if (!Array.isArray(command) || command.length === 0 || !command.every((part) => typeof part === 'string' && part)) {
+    throw new Error('--engine-cli must be a JSON array of strings, such as ["my-engine", "--quiet"]');
+  }
+  return command;
+}
+
+// Write a new adapter into .teach/adapters/. It is never overwritten: a kept adapter that has
+// started failing is repaired by the learner asking for it, not by a silent rewrite.
+function scaffoldAdapter(workspace, flags) {
+  const engineCli = parseEngineCli(flags['engine-cli']);
+  if (!flags.permissions) throw new Error('--permissions is required: say what the engine session really grants');
+  const name = flags.name === undefined ? 'connector' : flags.name;
+  if (!ADAPTER_NAME.test(name)) throw new Error('--name must be lowercase letters, digits and dashes');
+
+  const teachDir = path.join(workspace, '.teach');
+  const adaptersDir = path.join(teachDir, 'adapters');
+  const target = path.join(adaptersDir, `${name}.js`);
+  if (fs.existsSync(target)) {
+    throw new Error(
+      `.teach/adapters/${name}.js already exists and is never rewritten silently. ` +
+        'If the learner wants a replacement, they ask with /teach interactive and it is written under a new --name.',
+    );
+  }
+
+  fs.mkdirSync(adaptersDir, { recursive: true });
+  const ignoreFile = path.join(teachDir, '.gitignore');
+  if (!fs.existsSync(ignoreFile)) fs.writeFileSync(ignoreFile, '*\n');
+  const source = buildImprovisedAdapterSource({ engineCli, permissions: flags.permissions, loginHint: flags['login-hint'] });
+  fs.writeFileSync(target, source, { flag: 'wx', mode: 0o755 });
+  return { written: target, command: [process.execPath, target], name };
+}
+
+// What the agent runs:
+//   node improvised.js find --workspace <dir>
+//   node improvised.js decline --workspace <dir>
+//   node improvised.js scaffold --workspace <dir> --engine-cli <json array> --permissions <text>
+//                               [--login-hint <text>] [--name <slug>]
+function main(argv) {
+  const [command, ...rest] = argv;
+  const flags = parseFlags(rest);
+  const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+  if (!['find', 'decline', 'scaffold'].includes(command)) {
+    throw new Error('Usage: improvised.js find|decline|scaffold --workspace <dir> [--name value ...]');
+  }
+  if (!flags.workspace || !fs.existsSync(flags.workspace)) throw new Error('--workspace must name an existing folder');
+
+  if (command === 'find') {
+    const adapter = findKeptAdapter(flags.workspace);
+    print(adapter ? { found: true, adapter, command: [process.execPath, adapter] } : { found: false });
+  } else if (command === 'decline') {
+    recordOutcome(flags.workspace, { status: 'declined' });
+    print({ recorded: 'declined' });
+  } else if (command === 'scaffold') {
+    print(scaffoldAdapter(flags.workspace, flags));
+  }
+}
+
+if (require.main === module) {
+  try {
+    main(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`${err.message}\n`);
+    process.exit(1);
+  }
+}
+
 module.exports = {
+  scaffoldAdapter,
   UNREVIEWED_CONNECTOR_WARNING,
   findKeptAdapter,
   recordOutcome,

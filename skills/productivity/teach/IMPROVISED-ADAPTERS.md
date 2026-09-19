@@ -22,7 +22,7 @@ The agent improvises **only the adapter**. The shipped server continues to handl
 
 3. **Refusal:**
    If the learner says no (or declines):
-   - Record the refusal in `.teach/config.json`:
+   - Record the refusal by running `node <skill>/bridge/improvised.js decline --workspace .` (`<skill>` is the folder that holds `SKILL.md`, resolved on every invocation). It writes this to `.teach/config.json`; do not edit the file by hand:
      ```json
      {
        "version": 1,
@@ -35,6 +35,16 @@ The agent improvises **only the adapter**. The shipped server continues to handl
    - Do **not** write any adapter.
    - The session proceeds in tier 2.
    - On future starts in this workspace, the skill checks `status === 'declined'` and remains silent.
+
+## Commands
+
+Three small commands do the mechanical parts. Run them from the workspace root.
+
+- `node <skill>/bridge/improvised.js find --workspace .`: run this **first** in every session in an unrecognised harness. It prints `{"found": true, "adapter": "<path>", "command": [...]}` when a connector is already kept in `.teach/adapters/`, and `{"found": false}` otherwise. When found, reuse it without asking: pass `command` to the start command below.
+- `node <skill>/bridge/improvised.js decline --workspace .`: records that the learner said no.
+- `node <skill>/bridge/improvised.js scaffold --workspace . --engine-cli '<json array>' --permissions "<text>" [--login-hint "<text>"] [--name <slug>]`: writes a starting adapter to `.teach/adapters/<slug>.js` (default `connector`), creates the folder and its ignore file if needed, and prints the file and the command to run it. It refuses to overwrite an existing adapter.
+
+The scaffold is a **skeleton, not a working connector**. It calls the engine with placeholder arguments (`--version`, `--auth-status`, `--prime`, and `--send --session <id> --prompt <text>`) that no real engine is guaranteed to accept. Before you start the server, open the file and change each call so it uses the engine's own documented non-interactive interface, keeping the contract below. Then run the start command: the connection test (`check`, `prime`, and the workspace hash) is what shows whether the adapter works, and a failure puts the session in tier 2 with the reason.
 
 ## Workspace Isolation
 
@@ -66,10 +76,10 @@ The improvised adapter is an independent program executed as a child process. It
 
 ## Running the Improvised Adapter
 
-When starting the server, pass the improvised adapter command and mark it as improvised:
+Start the session the way [INTERACTIVE-SETUP.md](./INTERACTIVE-SETUP.md#starting-a-session) describes, adding the connector's command and marking it as improvised. Use the `command` that `find` or `scaffold` printed, as a JSON array:
 
 ```bash
-node <skill-path>/bridge/serve.js --workspace <workspace> --bind <mode> --adapter '["node", ".teach/adapters/connector.js"]' --improvised true
+node <skill>/bridge/session.js start --workspace . --harness other --mode <mode> --adapter '["<node path>", "<adapter path>"]' --improvised true
 ```
 
 The `--improvised true` argument marks the connector in the handshake state:
@@ -87,7 +97,7 @@ The learner must click "I understand" before the chat composer is enabled.
 
 ## Reuse and Failing Kept Adapters
 
-1. **Reuse:** On subsequent sessions in the workspace, the skill checks for an existing kept adapter in `.teach/adapters/` and reuses it directly without asking or re-generating.
+1. **Reuse:** On subsequent sessions in the workspace, `improvised.js find` reports an existing kept adapter in `.teach/adapters/`, and you reuse it directly without asking or re-generating.
 2. **Failing `check` on a kept adapter:**
    - If the engine binary is removed, or authentication lapses, the handshake `check` will fail.
    - The handshake transitions to `static` (tier 2) and presents the error reason and hint in the widget pill (with a Retry button).
