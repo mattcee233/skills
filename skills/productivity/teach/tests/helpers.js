@@ -23,8 +23,6 @@ function url(server, pathname, host = '127.0.0.1') {
   return `http://${host}:${server.port}${pathname}`;
 }
 
-module.exports = { makeWorkspace, url };
-
 // Open the SSE stream with fetch (EventSource cannot send the token header).
 // Returns { response, waitFor(regex), close() }.
 async function openEvents(server, token, host = '127.0.0.1') {
@@ -70,4 +68,4 @@ async function openEvents(server, token, host = '127.0.0.1') {
   };
 }
 
-module.exports.openEvents = openEvents;
+module.exports = { makeWorkspace, openEvents, url };

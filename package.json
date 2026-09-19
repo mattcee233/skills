@@ -12,7 +12,7 @@
     "changeset": "changeset",
     "version": "changeset version && node scripts/sync-plugin-version.mjs",
     "check-plugin-version": "node scripts/sync-plugin-version.mjs --check",
-    "test": "node --test --test-timeout=30000"
+    "test": "node --test"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",

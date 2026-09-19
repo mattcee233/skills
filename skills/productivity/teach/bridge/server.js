@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 
 const WIDGET_DIR = path.join(__dirname, 'widget');
-const WIDGET_SHELL =
+const WIDGET_TAGS =
   '<link rel="stylesheet" href="/_teach/widget.css">' +
   '<script src="/_teach/widget.js" defer></script>';
 
@@ -36,7 +36,7 @@ function baseHeaders(extra = {}) {
   return { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', ...extra };
 }
 
-function send(res, status, body, headers = {}) {
+function sendText(res, status, body, headers = {}) {
   res.writeHead(status, baseHeaders({ 'Content-Type': 'text/plain; charset=utf-8', ...headers }));
   res.end(body);
 }
@@ -73,7 +73,12 @@ function resolveServedFile(workspace, rawPath) {
 
 function injectWidget(html) {
   const index = html.toLowerCase().lastIndexOf('</body>');
-  return index === -1 ? html + WIDGET_SHELL : html.slice(0, index) + WIDGET_SHELL + html.slice(index);
+  return index === -1 ? html + WIDGET_TAGS : html.slice(0, index) + WIDGET_TAGS + html.slice(index);
+}
+
+function sendFileContent(res, method, type, content) {
+  res.writeHead(200, baseHeaders({ 'Content-Type': type, 'Content-Length': content.length }));
+  res.end(method === 'HEAD' ? undefined : content);
 }
 
 function serveFile(res, method, file, folder) {
@@ -82,17 +87,14 @@ function serveFile(res, method, file, folder) {
   if (folder === 'lessons' && type.startsWith('text/html')) {
     content = Buffer.from(injectWidget(content.toString('utf8')), 'utf8');
   }
-  res.writeHead(200, baseHeaders({ 'Content-Type': type, 'Content-Length': content.length }));
-  res.end(method === 'HEAD' ? undefined : content);
+  sendFileContent(res, method, type, content);
 }
 
 function serveWidgetAsset(res, method, name) {
   const file = path.join(WIDGET_DIR, name);
   const type = MIME[path.extname(file)];
-  if (!type || !fs.existsSync(file)) return send(res, 404, 'Not found');
-  const content = fs.readFileSync(file);
-  res.writeHead(200, baseHeaders({ 'Content-Type': type, 'Content-Length': content.length }));
-  res.end(method === 'HEAD' ? undefined : content);
+  if (!type || !fs.existsSync(file)) return sendText(res, 404, 'Not found');
+  sendFileContent(res, method, type, fs.readFileSync(file));
   return undefined;
 }
 
@@ -106,16 +108,52 @@ function hasToken(req, token) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-const UNSPECIFIED = new Set(['0.0.0.0', '::', '::0', '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0']);
+function blockList(subnets) {
+  const list = new net.BlockList();
+  for (const [network, prefix, family] of subnets) list.addSubnet(network, prefix, family);
+  return list;
+}
 
-// The one address to listen on besides loopback. Anything that means "every
-// interface" is refused: the server never listens on all interfaces.
+const LOOPBACK = blockList([['127.0.0.0', 8, 'ipv4'], ['::1', 128, 'ipv6']]);
+
+// Private, link-local and shared (Tailscale-style) ranges: what a home network uses.
+const LOCAL_NETWORKS = blockList([
+  ['10.0.0.0', 8, 'ipv4'],
+  ['172.16.0.0', 12, 'ipv4'],
+  ['192.168.0.0', 16, 'ipv4'],
+  ['169.254.0.0', 16, 'ipv4'],
+  ['100.64.0.0', 10, 'ipv4'],
+  ['127.0.0.0', 8, 'ipv4'],
+  ['fc00::', 7, 'ipv6'],
+  ['fe80::', 10, 'ipv6'],
+]);
+
+function familyOf(address) {
+  const version = net.isIP(address);
+  return version === 6 ? 'ipv6' : version === 4 ? 'ipv4' : null;
+}
+
+// The one address to listen on besides loopback. An allow-list, not a list of
+// spellings to refuse: "every interface" has many spellings, so anything that is
+// not plainly a local network address is refused. The server never listens on all
+// interfaces.
 function checkNetworkAddress(address) {
-  const valid = typeof address === 'string' && net.isIP(address) !== 0 && !UNSPECIFIED.has(address.toLowerCase());
-  if (!valid || address === '255.255.255.255') {
+  const family = typeof address === 'string' ? familyOf(address) : null;
+  if (!family) {
     throw new Error(`Refusing to bind: "${address}" is not a single usable address`);
   }
+  if (address === '127.0.0.1' || address === '::1') {
+    throw new Error(`Refusing to bind: "${address}" is the loopback address the server already listens on`);
+  }
+  if (!LOCAL_NETWORKS.check(address, family)) {
+    throw new Error(`Refusing to bind: "${address}" is not a private network address`);
+  }
   return address;
+}
+
+function isLoopbackPeer(req) {
+  const peer = req.socket.remoteAddress;
+  return typeof peer === 'string' && LOOPBACK.check(peer, familyOf(peer) || 'ipv4');
 }
 
 function listen(listener, port, host) {
@@ -179,13 +217,16 @@ async function answersAsTeachServer(port, pid) {
   }
 }
 
-async function stopLeftover(stateFile) {
-  let state;
+function readState(stateFile) {
   try {
-    state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   } catch {
-    return;
+    return null;
   }
+}
+
+async function stopLeftover(stateFile) {
+  const state = readState(stateFile);
   if (!state || state.pid === process.pid || !isAlive(state.pid)) return;
   if (!(await answersAsTeachServer(state.port, state.pid))) return;
   process.kill(state.pid);
@@ -195,7 +236,7 @@ async function stopLeftover(stateFile) {
 
 // Write the state file the launcher reads: owner-only, in a folder that ignores itself.
 function writeState(dir, state) {
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const ignore = path.join(dir, '.gitignore');
   if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
   const file = path.join(dir, STATE_FILE);
@@ -231,25 +272,26 @@ async function startServer({ workspace, bind, heartbeatMs = 20000 }) {
 
   const handler = (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
+      return sendText(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     }
     const rawPath = req.url.split('?')[0];
     if (rawPath === '/events') {
-      if (!hasToken(req, token)) return send(res, 401, 'Unauthorised');
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
       return openStream(res);
     }
     if (rawPath === '/_teach/identity') {
-      return send(res, 200, JSON.stringify({ teach: true, pid: process.pid }), {
+      if (!isLoopbackPeer(req)) return sendText(res, 404, 'Not found');
+      return sendText(res, 200, JSON.stringify({ teach: true, pid: process.pid }), {
         'Content-Type': 'application/json; charset=utf-8',
       });
     }
     if (rawPath.startsWith('/_teach/')) {
       const name = rawPath.slice('/_teach/'.length);
       if (/^[\w.-]+$/.test(name)) return serveWidgetAsset(res, req.method, name);
-      return send(res, 404, 'Not found');
+      return sendText(res, 404, 'Not found');
     }
     const served = resolveServedFile(root, rawPath);
-    if (!served) return send(res, 404, 'Not found');
+    if (!served) return sendText(res, 404, 'Not found');
     return serveFile(res, req.method, served.file, served.folder);
   };
 
@@ -261,23 +303,17 @@ async function startServer({ workspace, bind, heartbeatMs = 20000 }) {
     addresses,
     token,
     broadcast,
-    close: () => {
-      try {
-        if (JSON.parse(fs.readFileSync(stateFile, 'utf8')).pid === process.pid) fs.rmSync(stateFile);
-      } catch {
-        // already gone
-      }
-      return Promise.all(
-        listeners.map(
-          (listener) =>
-            new Promise((resolve) => {
-              clearInterval(heartbeat);
-              listener.close(() => resolve());
-              for (const res of streams) res.end();
-              listener.closeAllConnections();
-            }),
-        ),
-      ).then(() => undefined);
+    async close() {
+      if (readState(stateFile)?.pid === process.pid) fs.rmSync(stateFile, { force: true });
+      clearInterval(heartbeat);
+      for (const res of streams) res.end();
+      await Promise.all(
+        listeners.map((listener) => {
+          const closed = new Promise((resolve) => listener.close(resolve));
+          listener.closeAllConnections();
+          return closed;
+        }),
+      );
     },
   };
 }

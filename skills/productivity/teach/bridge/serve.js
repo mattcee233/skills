@@ -22,7 +22,7 @@ async function main() {
   }
   const server = await startServer({
     workspace: args.workspace,
-    bind: { mode: args.bind || 'loopback', address: args.address },
+    bind: { mode: args.bind, address: args.address },
   });
   process.stdout.write(`${JSON.stringify({ pid: process.pid, port: server.port, token: server.token, addresses: server.addresses })}\n`);
 

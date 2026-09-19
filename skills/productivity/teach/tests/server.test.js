@@ -2,9 +2,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { startServer } = require('../bridge/server');
-const { makeWorkspace, url } = require('./helpers');
+const { makeWorkspace, openEvents, url } = require('./helpers');
 
 const LESSON = '<!doctype html><html><body><h1>Loops</h1></body></html>';
 
@@ -101,7 +104,6 @@ test('refuses a symlink inside the lessons folder that points outside the worksp
 });
 
 function rawStatus(port, requestPath) {
-  const net = require('node:net');
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, '127.0.0.1', () => {
       socket.write(`GET ${requestPath} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
@@ -113,7 +115,6 @@ function rawStatus(port, requestPath) {
   });
 }
 
-const { openEvents } = require('./helpers');
 
 test('refuses the event stream without the session token, with a wrong token, or with the token in the query', async (t) => {
   const { server } = await withServer(t, {});
@@ -155,8 +156,6 @@ test('stopping the server ends open streams instead of hanging', async () => {
   events.close();
 });
 
-const os = require('node:os');
-const net = require('node:net');
 
 function reachable(port, host) {
   return new Promise((resolve) => {
@@ -207,16 +206,22 @@ test('"other devices" listens on loopback plus the chosen address, on one shared
 test('refuses to bind every interface, whichever way it is spelled', async (t) => {
   const ws = makeWorkspace({});
   t.after(() => ws.cleanup());
-  for (const address of ['0.0.0.0', '::', '::0', '0', '', undefined, '0.0.0.0/0']) {
+  const everyInterface = [
+    '0.0.0.0', '::', '::0', '0', '', undefined, '0.0.0.0/0',
+    // other spellings of the IPv6 unspecified address, and its IPv4-mapped forms
+    '0::0', '::0:0', '0:0::', '00::', '0000:0000:0000:0000:0000:0000:0000:0000', '::ffff:0:0', '::ffff:0.0.0.0',
+    // the rest of 0.0.0.0/8, and broadcast
+    '0.0.0.1', '255.255.255.255',
+  ];
+  for (const address of everyInterface) {
     await assert.rejects(
       startServer({ workspace: ws.dir, bind: { mode: 'network', address } }),
-      /address/i,
+      /Refusing to bind/,
       `address ${JSON.stringify(address)} should be refused`,
     );
   }
 });
 
-const { spawn } = require('node:child_process');
 
 const stateFile = (ws) => path.join(ws.dir, '.teach', 'server.json');
 const readState = (ws) => JSON.parse(fs.readFileSync(stateFile(ws), 'utf8'));
@@ -302,4 +307,30 @@ test('serves the widget script and stylesheet, and nothing else from the server 
     const status = await rawStatus(server.port, attempt);
     assert.ok(status === 400 || status === 404, `${attempt} answered ${status}`);
   }
+});
+
+test('refuses a public address, and the loopback address it already listens on', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  for (const address of ['8.8.8.8', '1.1.1.1', '2001:4860:4860::8888', '127.0.0.1']) {
+    await assert.rejects(
+      startServer({ workspace: ws.dir, bind: { mode: 'network', address } }),
+      /Refusing to bind/,
+      `address ${address} should be refused`,
+    );
+  }
+});
+
+test('the identity endpoint used to find a leftover server answers loopback callers only', async (t) => {
+  const external = Object.values(os.networkInterfaces())
+    .flat()
+    .find((i) => i.family === 'IPv4' && !i.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(i.address));
+  if (!external) return t.skip('no private non-loopback IPv4 address on this machine');
+  const { server } = await withServer(t, {}, { bind: { mode: 'network', address: external.address } });
+
+  const viaLoopback = await fetch(url(server, '/_teach/identity'));
+  assert.equal(viaLoopback.status, 200);
+  const viaNetwork = await fetch(url(server, '/_teach/identity', external.address));
+  assert.equal(viaNetwork.status, 404);
+  return undefined;
 });
