@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 const { createChat, failure } = require('./chat');
 const { createHandshake } = require('./handshake');
+const { checkSignal, createSignalDrop } = require('./signals');
 
 const WIDGET_DIR = path.join(__dirname, 'widget');
 const WIDGET_TAGS =
@@ -189,6 +190,12 @@ function checkNetworkAddress(address) {
   return address;
 }
 
+// Headers a browser adds to its own requests and a page's script cannot leave off or forge.
+// The launcher is not a browser, so a signal request that carries one came from a web page.
+function cameFromBrowser(req) {
+  return req.headers.origin !== undefined || req.headers['sec-fetch-site'] !== undefined;
+}
+
 function isLoopbackPeer(req) {
   const peer = req.socket.remoteAddress;
   return typeof peer === 'string' && LOOPBACK.check(peer, familyOf(peer) || 'ipv4');
@@ -231,6 +238,7 @@ async function listenForBind(handler, bind = { mode: 'loopback' }) {
 
 const STATE_DIR = '.teach';
 const STATE_FILE = 'server.json';
+const SIGNALS_DIR = 'signals';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -283,7 +291,7 @@ function writeState(dir, state) {
   fs.renameSync(temporary, file);
 }
 
-async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs }) {
+async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs, signalPollMs = 1000 }) {
   const root = fs.realpathSync(workspace);
   const stateDir = path.join(root, STATE_DIR);
   const stateFile = path.join(stateDir, STATE_FILE);
@@ -321,8 +329,30 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     for (const res of streams) res.write(frame);
   };
 
+  // A lesson path from the agent is a file path, not a URL: turn it into one the server resolves.
+  const resolveSignalLesson = (lessonPath) => {
+    if (lessonPath.includes('\0')) return null;
+    const urlPath = lessonPath.replace(/^\//, '').split('/').map(encodeURIComponent).join('/');
+    const served = resolveServedFile(root, `/${urlPath}`);
+    return served && served.folder === 'lessons' && /\.html?$/i.test(served.relative) ? served.relative : null;
+  };
+
+  // The one way a signal fires, whichever route it came by.
+  const fireSignal = ({ event, data }) => {
+    broadcast(event, data);
+    return streams.size;
+  };
+
   const handshake = createHandshake({ workspace: root, adapter, session, running, setSession: chat.setSession, broadcast, checkTimeoutMs, primeTimeoutMs });
   handshake.start();
+
+  const signalDrop = createSignalDrop({
+    dir: path.join(stateDir, SIGNALS_DIR),
+    intervalMs: signalPollMs,
+    check: (input) => checkSignal(input, resolveSignalLesson),
+    fire: fireSignal,
+  });
+  signalDrop.start();
 
   const heartbeat = setInterval(() => {
     for (const res of streams) res.write(': heartbeat\n\n');
@@ -336,6 +366,16 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
       return readJson(req, res, (body) => {
         const outcome = chat.submit(body);
         sendJson(res, outcome.status, outcome.body);
+      });
+    }
+    if (req.method === 'POST' && rawPath === '/signal') {
+      // Loopback only, and never from a web page: the page holds the same token for /send.
+      if (!isLoopbackPeer(req) || cameFromBrowser(req)) return sendText(res, 403, 'Forbidden');
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      return readJson(req, res, (body) => {
+        const outcome = checkSignal(body, resolveSignalLesson);
+        if (!outcome.ok) return sendJson(res, 400, outcome);
+        return sendJson(res, 200, { ok: true, delivered: fireSignal(outcome) });
       });
     }
     if (req.method === 'POST' && rawPath === '/retry') {
@@ -393,6 +433,7 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     async close() {
       if (readState(stateFile)?.pid === process.pid) fs.rmSync(stateFile, { force: true });
       clearInterval(heartbeat);
+      signalDrop.stop();
       handshake.stop();
       const adaptersGone = chat.close();
       for (const res of streams) res.end();

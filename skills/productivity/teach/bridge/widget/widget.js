@@ -540,6 +540,143 @@
     renderGate();
   }
 
+  // ---- Signals from the teacher ---------------------------------------------------------------
+  // The agent tells an open page that a lesson changed, through the server. The events carry no
+  // history: the lesson on disk is the truth, and a page that opens later is served fresh. So a
+  // signal is only a nudge, and it never moves the learner or discards anything they have done.
+  //   next-lesson {lesson, title}   the "next lesson" button now points here
+  //   reload {lesson}               this lesson changed on disk
+
+  var TOAST_KEY = 'teach.toast';
+  var TOAST_SECONDS = 7;
+  var UPDATED_TOAST = 'Your teacher updated this lesson. Your answers and chat were kept.';
+
+  function startToasts(root) {
+    var host = element('div', 'teach-toasts');
+    host.setAttribute('role', 'status');
+    host.setAttribute('aria-live', 'polite');
+    root.appendChild(host);
+    return function toast(text) {
+      var note = element('div', 'teach-toast', text);
+      host.appendChild(note);
+      setTimeout(function () {
+        if (note.parentNode) note.parentNode.removeChild(note);
+      }, TOAST_SECONDS * 1000);
+    };
+  }
+
+  // The button is found by its hook, so the agent and the page both rewrite the same element. The
+  // latest event always wins: a learner's question can spawn a lesson and change where "next" goes.
+  // The same target twice changes nothing. Nothing here scrolls or navigates.
+  function upsertNextButton(root, lesson, title) {
+    var label = 'Next lesson: ' + title;
+    var button = document.querySelector('[data-teach-next]');
+    if (button && button.getAttribute('href') === lesson && button.textContent === label) return null;
+    if (!button) {
+      button = element('a', 'teach-next');
+      button.setAttribute('data-teach-next', '');
+      document.body.insertBefore(button, root);
+    }
+    button.setAttribute('href', lesson);
+    button.textContent = label;
+    return button;
+  }
+
+  function pulse(button) {
+    button.classList.remove('teach-pulse');
+    // Reading a layout property makes the browser restart the animation if it is added again.
+    void button.offsetWidth;
+    button.classList.add('teach-pulse');
+    setTimeout(function () {
+      button.classList.remove('teach-pulse');
+    }, 2500);
+  }
+
+  // Bring the lesson on screen up to date without losing the learner's place. The lesson is
+  // replaced in place (chat, pending reply and anything typed live in the widget, outside it). A
+  // lesson with scripts of its own could not be swapped safely, so that one is loaded afresh: the
+  // chat, the pending reply and stored answers all live in localStorage and come back with it.
+  function isWidgetNode(node) {
+    var src = (node.getAttribute && (node.getAttribute('src') || node.getAttribute('href'))) || '';
+    return src.indexOf('/_teach/') === 0;
+  }
+
+  function swapLesson(html, root) {
+    var next = new DOMParser().parseFromString(html, 'text/html');
+    var scripts = Array.prototype.filter.call(next.querySelectorAll('script'), function (node) {
+      return !isWidgetNode(node);
+    });
+    Array.prototype.forEach.call(next.querySelectorAll('script, link'), function (node) {
+      if (isWidgetNode(node)) node.parentNode.removeChild(node);
+    });
+    var hasOwnScripts = scripts.length > 0 || !!document.querySelector('body script:not([src^="/_teach/"])');
+    if (hasOwnScripts) return false;
+
+    var scrollX = window.scrollX;
+    var scrollY = window.scrollY;
+    Array.prototype.slice.call(document.body.childNodes).forEach(function (node) {
+      if (node !== root && !isWidgetNode(node)) document.body.removeChild(node);
+    });
+    Array.prototype.slice.call(next.body.childNodes).forEach(function (node) {
+      document.body.insertBefore(document.importNode(node, true), root);
+    });
+    if (next.title) document.title = next.title;
+    Array.prototype.slice.call(document.head.querySelectorAll('style')).forEach(function (node) {
+      document.head.removeChild(node);
+    });
+    Array.prototype.forEach.call(next.head.querySelectorAll('style'), function (node) {
+      document.head.appendChild(document.importNode(node, true));
+    });
+    window.scrollTo(scrollX, scrollY);
+    document.dispatchEvent(new CustomEvent('teach:lesson-updated'));
+    return true;
+  }
+
+  function reloadLesson(root, toast) {
+    fetch(location.pathname, { cache: 'no-store' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('lesson not served');
+        return response.text();
+      })
+      .then(function (html) {
+        if (swapLesson(html, root)) return toast(UPDATED_TOAST);
+        try {
+          sessionStorage.setItem(TOAST_KEY, UPDATED_TOAST);
+        } catch (err) {
+          // Without session storage the page still reloads, just without the note.
+        }
+        return location.reload();
+      })
+      .catch(function () {
+        toast('Your teacher updated this lesson. Refresh the page to see it.');
+      });
+  }
+
+  function startSignals(root) {
+    var toast = startToasts(root);
+    try {
+      var waiting = sessionStorage.getItem(TOAST_KEY);
+      if (waiting) {
+        sessionStorage.removeItem(TOAST_KEY);
+        toast(waiting);
+      }
+    } catch (err) {
+      // No session storage: nothing was left waiting.
+    }
+    document.addEventListener('teach:event', function (event) {
+      var type = event.detail.type;
+      var data = event.detail.data || {};
+      if (type === 'next-lesson' && typeof data.lesson === 'string' && typeof data.title === 'string') {
+        var button = upsertNextButton(root, data.lesson, data.title);
+        if (!button) return;
+        pulse(button);
+        toast('Your teacher added a next lesson: ' + data.title + '.');
+      } else if (type === 'reload' && data.lesson === location.pathname) {
+        reloadLesson(root, toast);
+      }
+    });
+  }
+
   function start() {
     takeTokenFromUrl();
     var root = document.createElement('div');
@@ -552,6 +689,7 @@
     }
     connect(token, 1000);
     startConnection(token, root);
+    startSignals(root);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

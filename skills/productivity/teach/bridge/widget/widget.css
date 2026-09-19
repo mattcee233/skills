@@ -258,3 +258,61 @@
 .teach-pill-problem {
   color: var(--teach-error-fg);
 }
+
+/* A note that something changed. Notes stack at the top and go by themselves. */
+.teach-toasts {
+  position: fixed;
+  z-index: 2147483001;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.teach-toast {
+  padding: 10px 14px;
+  color: var(--teach-fg);
+  background: var(--teach-bg);
+  border: 1px solid var(--teach-line);
+  border-left: 4px solid var(--teach-accent);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+/* The next-lesson button lives in the lesson, outside the widget, so it carries its own colours.
+   A lesson may style [data-teach-next] itself; these are only the defaults. */
+a.teach-next {
+  display: inline-block;
+  margin: 1.5em 0;
+  padding: 10px 18px;
+  font: 600 15px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #ffffff;
+  background: #2456d6;
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+[data-teach-next].teach-pulse {
+  animation: teach-pulse 1.2s ease-out 2;
+}
+
+@keyframes teach-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(36, 86, 214, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgba(36, 86, 214, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-teach-next].teach-pulse {
+    animation: none;
+    outline: 3px solid #2456d6;
+    outline-offset: 2px;
+  }
+}

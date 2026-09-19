@@ -7,6 +7,10 @@
 // The handshake runs at start: the fake adapter's check is slow and fails at first ("not
 // logged in"), so the page goes Connecting..., then Chat not connected. Change "check" in the
 // script to {"type":"result","ok":true,"permissions":"..."} and press Retry to see live chat.
+// The launcher is installed in the workspace, and the workspace path is printed, so signals can be
+// tried from another terminal (run from that folder):
+//   node .teach/signal.js next-lesson lessons/0002-lists.html "Lists"
+//   node .teach/signal.js reload lessons/0001-loops.html
 //   node tests/dev-server.js connected   starts with a session already given (no handshake)
 const fs = require('node:fs');
 const os = require('node:os');
@@ -19,6 +23,7 @@ const page = (n, title) => `<!doctype html>
 <body style="font-family: Georgia, serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem">
 <h1>${title}</h1>
 <p>${'A loop repeats a step until something changes. '.repeat(12)}</p>
+<p><label>Try it: <input id="answer" placeholder="type here, then send a reload"></label></p>
 <p><a href="/lessons/000${n === 1 ? 2 : 1}-${n === 1 ? 'lists' : 'loops'}.html">Go to the other lesson</a></p>
 </body></html>`;
 
@@ -27,6 +32,9 @@ async function main() {
   fs.mkdirSync(path.join(workspace, 'lessons'));
   fs.writeFileSync(path.join(workspace, 'lessons', '0001-loops.html'), page(1, 'Loops'));
   fs.writeFileSync(path.join(workspace, 'lessons', '0002-lists.html'), page(2, 'Lists'));
+
+  fs.mkdirSync(path.join(workspace, '.teach'), { recursive: true });
+  fs.copyFileSync(path.join(__dirname, '..', 'bridge', 'signal.js'), path.join(workspace, '.teach', 'signal.js'));
 
   const adapter = fakeAdapter({
     check: { type: 'result', ok: false, error: { code: 'not-logged-in', message: 'Not logged in.', hint: 'Run claude auth login in a terminal, then press Retry.' } },
@@ -38,7 +46,7 @@ async function main() {
   const server = await startServer({ workspace, bind: { mode: 'loopback' }, adapter: adapter.command, session });
 
   const scriptPath = adapter.command[2];
-  process.stdout.write(`${JSON.stringify({ url: `http://127.0.0.1:${server.port}/lessons/0001-loops.html#t=${server.token}`, script: scriptPath })}\n`);
+  process.stdout.write(`${JSON.stringify({ workspace, url: `http://127.0.0.1:${server.port}/lessons/0001-loops.html#t=${server.token}`, script: scriptPath })}\n`);
 
   const stop = async () => {
     await server.close();
