@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { startServer } = require('../bridge/server');
-const { makeWorkspace, openEvents } = require('./helpers');
+const { makeWorkspace, openEvents, post } = require('./helpers');
 const { SIGNAL_FILES, BAD_SIGNALS } = require('./signal-helpers');
 const { PASSING, fail, withHandshake, awaitVerdict } = require('./handshake-helpers');
 
@@ -214,4 +214,15 @@ test('`status` and `retry` cannot fall back to a file: with no server they fail 
 
 test('the launcher carries a version comment for setup to compare', () => {
   assert.match(fs.readFileSync(LAUNCHER_SOURCE, 'utf8'), /^\/\/ teach-launcher-version: \d+$/m);
+});
+
+test('the launcher and the server agree on which titles are allowed', async (t) => {
+  const { ws, server } = await withServer(t);
+  const titles = { 'at the limit': ['x'.repeat(200), true], 'one over': ['x'.repeat(201), false], 'a newline': ['two\nlines', false], 'blank': ['   ', false] };
+  for (const [name, [title, allowed]] of Object.entries(titles)) {
+    const viaRoute = await post(server, '/signal', { event: 'next-lesson', lesson: 'lessons/0002-recursion.html', title });
+    const viaLauncher = await launch(ws, 'next-lesson', 'lessons/0002-recursion.html', title);
+    assert.equal(viaRoute.status === 200, allowed, `route, ${name}`);
+    assert.equal(viaLauncher.code === 0, allowed, `launcher, ${name}`);
+  }
 });

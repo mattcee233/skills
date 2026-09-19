@@ -259,3 +259,10 @@ test('the signals folder need not exist, and the poll stops with the server', as
   await pause(100);
   assert.ok(fs.existsSync(path.join(ws.dir, '.teach', 'signals', 'late.json')), 'a stopped server does not consume files');
 });
+
+test('a hand-written lesson path may start with a dot-slash or a slash, as the launcher allows', async (t) => {
+  const { server } = await withSignals(t);
+  for (const lesson of ['./lessons/0001-loops.html', '/lessons/0001-loops.html', 'lessons/0001-loops.html']) {
+    assert.equal((await post(server, '/signal', { event: 'reload', lesson })).status, 200, lesson);
+  }
+});

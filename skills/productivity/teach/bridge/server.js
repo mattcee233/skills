@@ -110,6 +110,11 @@ function resolveServedFile(workspace, rawPath) {
   return { file: realFile, folder, relative: segments.join('/') };
 }
 
+// The workspace-relative path of a served file if it is a lesson page, otherwise null.
+function lessonRelative(served) {
+  return served && served.folder === 'lessons' && /\.html?$/i.test(served.relative) ? served.relative : null;
+}
+
 function injectWidget(html) {
   const index = html.toLowerCase().lastIndexOf('</body>');
   return index === -1 ? html + WIDGET_TAGS : html.slice(0, index) + WIDGET_TAGS + html.slice(index);
@@ -308,7 +313,7 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     resultTtlMs,
     resolveLesson(pagePath) {
       const served = resolveServedFile(root, pagePath);
-      return served && served.folder === 'lessons' && /.html?$/i.test(served.relative) ? served.relative : null;
+      return lessonRelative(served);
     },
   });
   chat.setSession(session);
@@ -332,9 +337,9 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
   // A lesson path from the agent is a file path, not a URL: turn it into one the server resolves.
   const resolveSignalLesson = (lessonPath) => {
     if (lessonPath.includes('\0')) return null;
-    const urlPath = lessonPath.replace(/^\//, '').split('/').map(encodeURIComponent).join('/');
+    const urlPath = lessonPath.replace(/^(\.\/|\/)+/, '').split('/').map(encodeURIComponent).join('/');
     const served = resolveServedFile(root, `/${urlPath}`);
-    return served && served.folder === 'lessons' && /\.html?$/i.test(served.relative) ? served.relative : null;
+    return lessonRelative(served);
   };
 
   // The one way a signal fires, whichever route it came by.
