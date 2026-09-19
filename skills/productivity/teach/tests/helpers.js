@@ -68,4 +68,15 @@ async function openEvents(server, token, host = '127.0.0.1') {
   };
 }
 
-module.exports = { makeWorkspace, openEvents, url };
+// POST a JSON body. The token goes in the header, as the page sends it.
+function post(server, pathname, body, token = server.token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['X-Teach-Token'] = token;
+  return fetch(url(server, pathname), { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
+function get(server, pathname, token = server.token) {
+  return fetch(url(server, pathname), { headers: token ? { 'X-Teach-Token': token } : {} });
+}
+
+module.exports = { makeWorkspace, openEvents, url, post, get };

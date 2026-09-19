@@ -1,4 +1,209 @@
-/* The "ask the teacher" widget. Later tickets fill this in; the shell stays out of the way. */
+/* The "ask the teacher" widget. One docked panel for now; the responsive layouts and the
+   permission notice come with later tickets. */
 #teach-widget {
+  --teach-bg: #ffffff;
+  --teach-fg: #1d2330;
+  --teach-muted: #5b6475;
+  --teach-line: #d9dde5;
+  --teach-you: #e8efff;
+  --teach-teacher: #f3f4f7;
+  --teach-accent: #2456d6;
+  --teach-error-bg: #fdecec;
+  --teach-error-line: #e0a3a3;
+  --teach-error-fg: #7a1c1c;
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--teach-fg);
+}
+
+@media (prefers-color-scheme: dark) {
+  #teach-widget {
+    --teach-bg: #1b1f2a;
+    --teach-fg: #e6e9f0;
+    --teach-muted: #9aa3b5;
+    --teach-line: #343b4d;
+    --teach-you: #26365e;
+    --teach-teacher: #262b38;
+    --teach-accent: #7da2ff;
+    --teach-error-bg: #3a2020;
+    --teach-error-line: #7a3b3b;
+    --teach-error-fg: #ffb4b4;
+  }
+}
+
+/* Chat is off until the widget script finds a session token. */
+#teach-widget:empty {
   display: none;
+}
+
+.teach-panel {
+  position: fixed;
+  z-index: 2147483000;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 45vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--teach-bg);
+  border-top: 1px solid var(--teach-line);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+}
+
+@media (min-width: 1000px) {
+  html[data-teach-chat='on'] body {
+    margin-right: 380px;
+  }
+
+  .teach-panel {
+    top: 0;
+    left: auto;
+    width: 380px;
+    height: auto;
+    border-top: 0;
+    border-left: 1px solid var(--teach-line);
+    box-shadow: none;
+  }
+}
+
+.teach-heading {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--teach-fg);
+}
+
+.teach-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+.teach-divider {
+  align-self: center;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--teach-muted);
+}
+
+.teach-message {
+  max-width: 92%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.teach-you {
+  align-self: flex-end;
+  background: var(--teach-you);
+}
+
+.teach-teacher {
+  align-self: flex-start;
+  background: var(--teach-teacher);
+}
+
+.teach-error {
+  padding: 8px 10px;
+  border: 1px solid var(--teach-error-line);
+  border-radius: 8px;
+  background: var(--teach-error-bg);
+  color: var(--teach-error-fg);
+}
+
+.teach-error p {
+  margin: 4px 0 0;
+}
+
+.teach-retry {
+  margin-top: 8px;
+  padding: 4px 12px;
+  font: inherit;
+  color: var(--teach-error-fg);
+  background: transparent;
+  border: 1px solid var(--teach-error-line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.teach-status {
+  padding: 4px 0 6px;
+  font-size: 13px;
+  color: var(--teach-muted);
+}
+
+.teach-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.teach-hint {
+  margin-top: 4px;
+}
+
+.teach-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--teach-line);
+  border-top-color: var(--teach-accent);
+  border-radius: 50%;
+  animation: teach-spin 0.9s linear infinite;
+}
+
+@keyframes teach-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teach-spinner {
+    animation-duration: 3s;
+  }
+}
+
+.teach-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.teach-input {
+  flex: 1;
+  box-sizing: border-box;
+  min-height: 40px;
+  max-height: 120px;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--teach-fg);
+  background: var(--teach-bg);
+  border: 1px solid var(--teach-line);
+  border-radius: 8px;
+  resize: vertical;
+}
+
+.teach-input:disabled {
+  background: var(--teach-teacher);
+}
+
+.teach-send {
+  padding: 8px 16px;
+  font: inherit;
+  color: #ffffff;
+  background: var(--teach-accent);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.teach-send:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

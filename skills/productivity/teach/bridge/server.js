@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const net = require('node:net');
+const { createChat, failure } = require('./chat');
 
 const WIDGET_DIR = path.join(__dirname, 'widget');
 const WIDGET_TAGS =
@@ -41,6 +42,42 @@ function sendText(res, status, body, headers = {}) {
   res.end(body);
 }
 
+function sendJson(res, status, body) {
+  res.writeHead(status, baseHeaders({ 'Content-Type': 'application/json; charset=utf-8' }));
+  res.end(JSON.stringify(body));
+}
+
+const MAX_BODY_BYTES = 64 * 1024;
+
+// Read a JSON object from the request body, or answer 400 (not an object) or 413 (too big).
+function readJson(req, res, onBody) {
+  let raw = '';
+  let tooBig = false;
+  req.setEncoding('utf8');
+  req.on('data', (chunk) => {
+    if (tooBig) return;
+    raw += chunk;
+    if (raw.length > MAX_BODY_BYTES && !tooBig) {
+      tooBig = true;
+      raw = '';
+      sendJson(res, 413, failure('failed', 'That message is too long.'));
+    }
+  });
+  req.on('end', () => {
+    if (tooBig) return;
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = null;
+    }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return sendJson(res, 400, failure('failed', 'That message could not be read.'));
+    }
+    return onBody(body);
+  });
+}
+
 // Turn a request path into a file below one of the served folders, or null.
 function resolveServedFile(workspace, rawPath) {
   if (rawPath.includes('\0') || rawPath.includes('\\')) return null;
@@ -68,7 +105,7 @@ function resolveServedFile(workspace, rawPath) {
   }
   if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) return null;
   if (!fs.statSync(realFile).isFile()) return null;
-  return { file: realFile, folder };
+  return { file: realFile, folder, relative: segments.join('/') };
 }
 
 function injectWidget(html) {
@@ -245,13 +282,24 @@ function writeState(dir, state) {
   fs.renameSync(temporary, file);
 }
 
-async function startServer({ workspace, bind, heartbeatMs = 20000 }) {
+async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs }) {
   const root = fs.realpathSync(workspace);
   const stateDir = path.join(root, STATE_DIR);
   const stateFile = path.join(stateDir, STATE_FILE);
   await stopLeftover(stateFile);
   const token = crypto.randomBytes(32).toString('hex');
   const streams = new Set();
+  const chat = createChat({
+    workspace: root,
+    adapter,
+    sendTimeoutMs,
+    resultTtlMs,
+    resolveLesson(pagePath) {
+      const served = resolveServedFile(root, pagePath);
+      return served && served.folder === 'lessons' && /.html?$/i.test(served.relative) ? served.relative : null;
+    },
+  });
+  chat.setSession(session);
 
   const openStream = (res) => {
     res.writeHead(200, baseHeaders({ 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive' }));
@@ -271,10 +319,28 @@ async function startServer({ workspace, bind, heartbeatMs = 20000 }) {
   heartbeat.unref();
 
   const handler = (req, res) => {
+    const rawPath = req.url.split('?')[0];
+    if (req.method === 'POST' && rawPath === '/send') {
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      return readJson(req, res, (body) => {
+        const outcome = chat.submit(body);
+        sendJson(res, outcome.status, outcome.body);
+      });
+    }
+    if (req.method === 'POST') return sendText(res, 404, 'Not found');
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return sendText(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     }
-    const rawPath = req.url.split('?')[0];
+    if (rawPath.startsWith('/reply/')) {
+      if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
+      let id;
+      try {
+        id = decodeURIComponent(rawPath.slice('/reply/'.length));
+      } catch {
+        return sendText(res, 404, 'Not found');
+      }
+      return sendJson(res, 200, chat.lookup(id));
+    }
     if (rawPath === '/events') {
       if (!hasToken(req, token)) return sendText(res, 401, 'Unauthorised');
       return openStream(res);
@@ -303,9 +369,11 @@ async function startServer({ workspace, bind, heartbeatMs = 20000 }) {
     addresses,
     token,
     broadcast,
+    setSession: chat.setSession,
     async close() {
       if (readState(stateFile)?.pid === process.pid) fs.rmSync(stateFile, { force: true });
       clearInterval(heartbeat);
+      chat.close();
       for (const res of streams) res.end();
       await Promise.all(
         listeners.map((listener) => {
