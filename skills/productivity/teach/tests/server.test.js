@@ -154,3 +154,152 @@ test('stopping the server ends open streams instead of hanging', async () => {
   ws.cleanup();
   events.close();
 });
+
+const os = require('node:os');
+const net = require('node:net');
+
+function reachable(port, host) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host, timeout: 500 }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+test('"this computer only" listens on the loopback address and nothing else', async (t) => {
+  const { server } = await withServer(t, {});
+  assert.deepEqual(server.addresses, [{ address: '127.0.0.1', port: server.port }]);
+
+  const external = Object.values(os.networkInterfaces())
+    .flat()
+    .find((i) => i.family === 'IPv4' && !i.internal);
+  if (!external) return t.skip('no non-loopback IPv4 address on this machine');
+  assert.equal(await reachable(server.port, external.address), false);
+  return undefined;
+});
+
+test('"other devices" listens on loopback plus the chosen address, on one shared port', async (t) => {
+  // 127.0.0.2 stands in for a private LAN address so the test needs no network.
+  const { server } = await withServer(t, { 'lessons/0001-x.html': LESSON }, {
+    bind: { mode: 'network', address: '127.0.0.2' },
+  });
+  assert.deepEqual(server.addresses, [
+    { address: '127.0.0.1', port: server.port },
+    { address: '127.0.0.2', port: server.port },
+  ]);
+  for (const host of ['127.0.0.1', '127.0.0.2']) {
+    const res = await fetch(url(server, '/lessons/0001-x.html', host));
+    assert.equal(res.status, 200, host);
+  }
+
+  const viaLan = await openEvents(server, server.token, '127.0.0.2');
+  t.after(() => viaLan.close());
+  server.broadcast('test', { on: 'both' });
+  await viaLan.waitFor(/event: test/);
+});
+
+test('refuses to bind every interface, whichever way it is spelled', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  for (const address of ['0.0.0.0', '::', '::0', '0', '', undefined, '0.0.0.0/0']) {
+    await assert.rejects(
+      startServer({ workspace: ws.dir, bind: { mode: 'network', address } }),
+      /address/i,
+      `address ${JSON.stringify(address)} should be refused`,
+    );
+  }
+});
+
+const { spawn } = require('node:child_process');
+
+const stateFile = (ws) => path.join(ws.dir, '.teach', 'server.json');
+const readState = (ws) => JSON.parse(fs.readFileSync(stateFile(ws), 'utf8'));
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function until(check, ms = 5000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error('condition not met in time');
+}
+
+test('records its pid, port and token in a self-ignoring state folder, and removes them on a clean stop', async (t) => {
+  const ws = makeWorkspace({});
+  const server = await startServer({ workspace: ws.dir, bind: { mode: 'loopback' } });
+  t.after(() => ws.cleanup());
+
+  assert.deepEqual(readState(ws), { pid: process.pid, port: server.port, token: server.token });
+  assert.equal(fs.readFileSync(path.join(ws.dir, '.teach', '.gitignore'), 'utf8').trim(), '*');
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(stateFile(ws)).mode & 0o777, 0o600);
+  }
+
+  await server.close();
+  assert.equal(fs.existsSync(stateFile(ws)), false);
+});
+
+test('starting a server stops a leftover server found through the state file', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const leftover = spawn(process.execPath, [path.join(__dirname, 'leftover-server.js'), ws.dir], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  t.after(() => leftover.kill());
+  await new Promise((resolve) => leftover.stdout.once('data', resolve));
+  assert.equal(readState(ws).pid, leftover.pid);
+
+  const server = await startServer({ workspace: ws.dir, bind: { mode: 'loopback' } });
+  t.after(() => server.close());
+
+  await until(() => !alive(leftover.pid));
+  assert.equal(readState(ws).pid, process.pid);
+});
+
+test('a stale state file, or one naming an unrelated process, is overwritten and the process left alone', async (t) => {
+  const ws = makeWorkspace({});
+  t.after(() => ws.cleanup());
+  const bystander = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => bystander.kill());
+  fs.mkdirSync(path.join(ws.dir, '.teach'));
+
+  for (const stale of [{ pid: 2 ** 22 + 12345, port: 1, token: 'x' }, { pid: bystander.pid, port: 1, token: 'x' }]) {
+    fs.writeFileSync(stateFile(ws), JSON.stringify(stale));
+    const server = await startServer({ workspace: ws.dir, bind: { mode: 'loopback' } });
+    assert.equal(readState(ws).pid, process.pid);
+    await server.close();
+  }
+  assert.equal(alive(bystander.pid), true, 'an unrelated process must never be stopped');
+});
+
+test('serves the widget script and stylesheet, and nothing else from the server folder', async (t) => {
+  const { server } = await withServer(t, {});
+
+  const script = await fetch(url(server, '/_teach/widget.js'));
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get('content-type'), /^text\/javascript/);
+  assert.equal(script.headers.get('cache-control'), 'no-store');
+  const style = await fetch(url(server, '/_teach/widget.css'));
+  assert.equal(style.status, 200);
+  assert.match(style.headers.get('content-type'), /^text\/css/);
+
+  for (const attempt of ['/_teach/server.js', '/_teach/serve.js', '/_teach/..', '/_teach/../server.js', '/_teach/..%2fserver.js', '/_teach/%2e%2e%2fserver.js']) {
+    const status = await rawStatus(server.port, attempt);
+    assert.ok(status === 400 || status === 404, `${attempt} answered ${status}`);
+  }
+});

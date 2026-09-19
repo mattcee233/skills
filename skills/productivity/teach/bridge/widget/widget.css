@@ -1,1 +1,4 @@
-body{}
+/* The "ask the teacher" widget. Later tickets fill this in; the shell stays out of the way. */
+#teach-widget {
+  display: none;
+}
