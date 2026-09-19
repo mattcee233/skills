@@ -139,16 +139,26 @@
 
   // EventSource cannot send a header, so read the stream with fetch to keep the token
   // out of the URL.
-  function connect(token, tab, delay) {
+  // The page from an earlier session finds nothing at its address, or a different server that does not
+  // know its token. Two failures in a row (or a refused token) say the teaching server is gone.
+  var FAILURES_BEFORE_DEAD = 2;
+
+  function tellStream(state) {
+    document.dispatchEvent(new CustomEvent('teach:stream', { detail: { state: state } }));
+  }
+
+  function connect(token, tab, delay, failures) {
     setStream('connecting');
     fetch('/events', { headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab } })
       .then(function (response) {
         if (response.status === 401) {
           setStream('unauthorised');
+          tellStream('lost');
           return null;
         }
         if (!response.ok) throw new Error('stream refused');
         setStream('open');
+        tellStream('open');
         var reader = response.body.getReader();
         var decoder = new TextDecoder();
         var buffer = '';
@@ -163,13 +173,16 @@
           });
         }
         return pump().then(function () {
+          failures = -1;
           throw new Error('stream ended');
         });
       })
       .catch(function () {
         setStream('closed');
+        var failed = (failures || 0) + 1;
+        if (failed >= FAILURES_BEFORE_DEAD) tellStream('lost');
         setTimeout(function () {
-          connect(token, tab, Math.min(delay * 2, 10000));
+          connect(token, tab, Math.min(delay * 2, 10000), failed);
         }, delay);
       });
   }
@@ -240,36 +253,92 @@
     displaced: 'Another page took over AI interaction.',
     free: 'The other page has closed, so AI interaction is free.',
   };
+  // The same states as a short line for the status pill on a narrow screen.
+  var LEASE_PILLS = {
+    'not-interactive': 'Another page has AI interaction',
+    displaced: 'Another page took over AI interaction',
+    free: 'The other page has closed',
+  };
+  // Said before the permissions when the connector was written by the AI for this workspace.
+  var UNREVIEWED_LINE = 'This connector was written by an AI for this workspace and has not been reviewed. Check what it does before you rely on it.';
+  var WIDE_QUERY = '(min-width: 1000px)';
+  var ACK_KEY_PREFIX = 'teach.ack.';
 
+  // One widget, two layouts. Wide (1000px and up): a docked panel on the right that the lesson makes
+  // room for, open by default and collapsible to an edge tab. Narrow: a slim bar along the bottom
+  // (thread toggle, message box, send) with the thread in a sheet that slides up, closed by default.
+  // It is one set of elements: only the styles change with the screen, so resizing across the
+  // breakpoint keeps the thread, what was typed and any pending reply.
   function startChat(token, tab, hooks) {
     var thread = loadThread();
+    var root = document.getElementById('teach-widget');
     var panel = element('section', 'teach-panel');
     panel.setAttribute('aria-label', 'Ask the teacher');
-    var heading = element('h2', 'teach-heading', 'Ask the teacher');
+
+    var head = element('div', 'teach-head');
+    head.appendChild(element('h2', 'teach-heading', 'Ask the teacher'));
+    var collapse = element('button', 'teach-collapse', 'Hide');
+    collapse.type = 'button';
+    collapse.setAttribute('aria-controls', 'teach-sheet');
+    head.appendChild(collapse);
+
+    var sheet = element('div', 'teach-sheet');
+    sheet.id = 'teach-sheet';
+    var permission = element('div', 'teach-permission');
+    permission.hidden = true;
+    var notice = element('div', 'teach-lease');
+    notice.hidden = true;
     var list = element('div', 'teach-thread');
     list.setAttribute('role', 'log');
-    list.setAttribute('aria-live', 'polite');
+    list.setAttribute('aria-live', 'off');
+    list.setAttribute('aria-label', 'Conversation with your teacher');
+    list.tabIndex = 0;
+    sheet.appendChild(permission);
+    sheet.appendChild(notice);
+    sheet.appendChild(list);
+
+    var bar = element('div', 'teach-bar');
     var status = element('div', 'teach-status');
     status.hidden = true;
-    var notice = element('div', 'teach-lease');
-    notice.setAttribute('role', 'status');
-    notice.hidden = true;
+    status.tabIndex = -1;
     var form = element('form', 'teach-composer');
+    var toggle = element('button', 'teach-toggle', 'Thread');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-controls', 'teach-sheet');
     var input = element('textarea', 'teach-input');
     input.rows = 2;
     input.setAttribute('aria-label', 'Message for your teacher');
     input.placeholder = 'Ask a question, or ask for a change...';
     var send = element('button', 'teach-send', 'Send');
     send.type = 'submit';
+    form.appendChild(toggle);
     form.appendChild(input);
     form.appendChild(send);
-    panel.appendChild(heading);
-    panel.appendChild(list);
-    panel.appendChild(status);
-    panel.appendChild(notice);
-    panel.appendChild(form);
-    var root = document.getElementById('teach-widget');
+    bar.appendChild(status);
+    bar.appendChild(form);
+
+    panel.appendChild(head);
+    panel.appendChild(sheet);
+    panel.appendChild(bar);
+
+    // The tab a collapsed wide panel leaves at the edge of the screen.
+    var edge = element('button', 'teach-edge', 'Ask the teacher');
+    edge.type = 'button';
+    edge.setAttribute('aria-controls', 'teach-sheet');
+    edge.setAttribute('aria-expanded', 'false');
+
+    // Two regions for a screen reader: replies are announced politely, errors at once. The thread
+    // itself is redrawn whole, so it is not a live region.
+    var polite = element('div', 'teach-sr');
+    polite.setAttribute('role', 'status');
+    polite.setAttribute('aria-live', 'polite');
+    var assertive = element('div', 'teach-sr');
+    assertive.setAttribute('role', 'alert');
+
     root.appendChild(panel);
+    root.appendChild(edge);
+    root.appendChild(polite);
+    root.appendChild(assertive);
 
     var pollTimer = null;
     var pollFailures = 0;
@@ -278,6 +347,126 @@
     // Only the holder sends, waits for replies or writes the thread.
     var lease = 'unknown';
     var leaseProblem = '';
+    // What the adapter said the agent is allowed to do, and whether the learner has confirmed it.
+    var permissionInfo = { text: '', improvised: false };
+    var confirmedHere = false;
+    var chatShown = false;
+    panel.hidden = true;
+    edge.hidden = true;
+    // Layout: open or closed for each of the two layouts, and whether there is something new to
+    // read while the sheet is closed.
+    var isOpenIn = { wide: true, narrow: false };
+    var unread = false;
+    var query = window.matchMedia ? window.matchMedia(WIDE_QUERY) : null;
+
+    function announce(region, text) {
+      region.textContent = '';
+      setTimeout(function () {
+        region.textContent = text;
+      }, 50);
+    }
+
+    // ---- layout
+
+    function isWide() {
+      return query ? query.matches : true;
+    }
+
+    function isOpen() {
+      return isOpenIn[isWide() ? 'wide' : 'narrow'];
+    }
+
+    function applyLayout() {
+      var wide = isWide();
+      var open = isOpen();
+      root.setAttribute('data-layout', wide ? 'wide' : 'narrow');
+      root.setAttribute('data-open', open ? 'true' : 'false');
+      document.documentElement.setAttribute('data-teach-dock', chatShown && wide && open ? 'open' : 'closed');
+      document.documentElement.setAttribute('data-teach-bar', chatShown && !wide ? 'on' : 'off');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      collapse.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.setAttribute('data-unread', unread && !open ? 'true' : 'false');
+    }
+
+    function setOpen(value) {
+      isOpenIn[isWide() ? 'wide' : 'narrow'] = value;
+      if (value) unread = false;
+      applyLayout();
+      renderStatus();
+    }
+
+    toggle.addEventListener('click', function () {
+      setOpen(!isOpen());
+    });
+    collapse.addEventListener('click', function () {
+      setOpen(false);
+      edge.focus();
+    });
+    edge.addEventListener('click', function () {
+      setOpen(true);
+      collapse.focus();
+    });
+    // Escape closes the sheet on a narrow screen and puts focus back on its toggle.
+    sheet.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && !isWide() && isOpen()) {
+        setOpen(false);
+        toggle.focus();
+      }
+    });
+    if (query) {
+      if (query.addEventListener) query.addEventListener('change', applyLayout);
+      else query.addListener(applyLayout);
+    }
+
+    // ---- the permission notice
+
+    function ackKey() {
+      return ACK_KEY_PREFIX + token.slice(0, 16);
+    }
+
+    // Confirmed for this session: the flag is keyed by the session's token, and it holds the text that
+    // was confirmed, so different words are asked about again. It blocks the message box here only.
+    function confirmed() {
+      if (confirmedHere) return true;
+      try {
+        return localStorage.getItem(ackKey()) === permissionInfo.text;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function needsConfirming() {
+      return !!permissionInfo.text && !confirmed();
+    }
+
+    function confirm() {
+      confirmedHere = true;
+      try {
+        localStorage.setItem(ackKey(), permissionInfo.text);
+      } catch (err) {
+        // Storage is blocked: the confirmation lasts for this page only.
+      }
+      render();
+      input.focus();
+    }
+
+    function renderPermission() {
+      permission.textContent = '';
+      var show = lease === 'interactive' && needsConfirming();
+      permission.hidden = !show;
+      if (!show) return;
+      if (permissionInfo.improvised) permission.appendChild(element('p', 'teach-unreviewed', UNREVIEWED_LINE));
+      var line = element('p');
+      line.appendChild(element('strong', null, 'Before you start: '));
+      line.appendChild(document.createTextNode('The agent session will have the following permissions: ' + permissionInfo.text));
+      permission.appendChild(line);
+      var ok = element('button', 'teach-send', 'I understand');
+      ok.type = 'button';
+      ok.addEventListener('click', confirm);
+      permission.appendChild(ok);
+    }
+
+    // ---- the thread
 
     function findMessage(matches) {
       for (var i = 0; i < thread.length; i += 1) {
@@ -322,7 +511,6 @@
           list.appendChild(element('div', 'teach-message teach-teacher', entry.text));
         } else if (entry.kind === 'error') {
           var block = element('div', 'teach-error');
-          block.setAttribute('role', 'alert');
           block.appendChild(element('strong', null, "Couldn't send (" + entry.code + ')'));
           block.appendChild(element('p', null, entry.message));
           block.appendChild(element('p', null, entry.hint || FALLBACK_HINTS[entry.code] || FALLBACK_HINTS.failed));
@@ -344,11 +532,20 @@
       });
       var waiting = pendingMessage();
       var holds = lease === 'interactive';
-      input.disabled = !!waiting || !holds;
-      send.disabled = !!waiting || !holds;
-      input.placeholder = !holds ? 'Disabled on this page' : waiting ? 'Waiting for your teacher...' : 'Ask a question, or ask for a change...';
-      renderStatus();
+      var usable = holds && !needsConfirming();
+      input.disabled = !!waiting || !usable;
+      send.disabled = !!waiting || !usable;
+      input.placeholder = !holds
+        ? 'Disabled on this page'
+        : !usable
+          ? 'Read the notice first'
+          : waiting
+            ? 'Waiting for your teacher...'
+            : 'Ask a question, or ask for a change...';
+      renderPermission();
       renderNotice();
+      renderStatus();
+      applyLayout();
       list.scrollTop = list.scrollHeight;
     }
 
@@ -377,24 +574,42 @@
       });
     }
 
-    function renderStatus() {
-      var waiting = pendingMessage();
-      if (!waiting) {
-        status.hidden = true;
-        status.textContent = '';
-        return;
-      }
-      var seconds = Math.max(0, Math.floor((Date.now() - waiting.sentAt) / 1000));
+    // The status pill, on its own line above the message box. "Thinking" shows on every screen. The
+    // lines that send the learner to the sheet (read the notice, another page, a new reply) matter
+    // where the sheet can be closed, so they show on a narrow screen only, as a button that opens it.
+    function attention(text) {
       status.hidden = false;
-      status.textContent = '';
-      var line = element('div', 'teach-thinking');
-      line.appendChild(element('span', 'teach-spinner'));
-      line.appendChild(document.createTextNode('I am thinking... ' + clock(seconds)));
-      status.appendChild(line);
-      var hints = HINT_AFTER_SECONDS.filter(function (pair) {
-        return seconds >= pair[0];
+      status.setAttribute('data-kind', 'attention');
+      var button = element('button', 'teach-status-button', text);
+      button.type = 'button';
+      button.addEventListener('click', function () {
+        if (!isOpen()) setOpen(true);
       });
-      if (hints.length) status.appendChild(element('div', 'teach-hint', hints[hints.length - 1][1]));
+      status.appendChild(button);
+    }
+
+    function renderStatus() {
+      status.textContent = '';
+      var waiting = pendingMessage();
+      if (lease === 'interactive' && needsConfirming()) return attention('Read the notice first');
+      if (lease !== 'interactive' && lease !== 'unknown') return attention(LEASE_PILLS[lease]);
+      if (waiting) {
+        var seconds = Math.max(0, Math.floor((Date.now() - waiting.sentAt) / 1000));
+        status.hidden = false;
+        status.setAttribute('data-kind', 'thinking');
+        var line = element('div', 'teach-thinking');
+        line.appendChild(element('span', 'teach-spinner'));
+        line.appendChild(document.createTextNode('I am thinking... ' + clock(seconds)));
+        status.appendChild(line);
+        var hints = HINT_AFTER_SECONDS.filter(function (pair) {
+          return seconds >= pair[0];
+        });
+        if (hints.length) status.appendChild(element('div', 'teach-hint', hints[hints.length - 1][1]));
+        return undefined;
+      }
+      if (unread && !isOpen()) return attention('New reply');
+      status.hidden = true;
+      return undefined;
     }
 
     // A page that has lost the lease may still be handed an answer it was already waiting for. The
@@ -405,12 +620,21 @@
       return messageById(message.id) || message;
     }
 
+    // Focus stays where the learner put it: only a learner who is still in the widget is moved back to
+    // the message box when the reply arrives.
+    function returnFocus() {
+      if (panel.contains(document.activeElement)) input.focus();
+    }
+
     function fail(message, code, text, hint) {
       message = current(message);
       message.status = 'failed';
       thread.push({ kind: 'error', forId: message.id, code: code, message: text, hint: hint || '' });
       saveThread(thread);
+      if (!isOpen()) unread = true;
       render();
+      announce(assertive, "Couldn't send: " + text + ' ' + (hint || FALLBACK_HINTS[code] || FALLBACK_HINTS.failed));
+      returnFocus();
     }
 
     function settle(message, result) {
@@ -419,8 +643,10 @@
         message.status = 'done';
         thread.push({ kind: 'teacher', text: result.text });
         saveThread(thread);
+        if (!isOpen()) unread = true;
         render();
-        input.focus();
+        announce(polite, 'Your teacher replied: ' + result.text);
+        returnFocus();
       } else {
         var error = (result && result.error) || {};
         fail(message, error.code || 'failed', error.message || 'The teacher could not reply.', error.hint);
@@ -514,6 +740,9 @@
       thread.push(message);
       saveThread(thread);
       render();
+      // The message box is disabled while the reply is pending, which would drop keyboard focus out of
+      // the widget: the status line takes it, and reads out that the teacher is working.
+      status.focus();
       deliver(message);
     }
 
@@ -532,13 +761,14 @@
       message.title = lesson.title;
       saveThread(thread);
       render();
+      status.focus();
       deliver(message);
     }
 
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       var text = input.value;
-      if (!text.trim() || pendingMessage()) return;
+      if (!text.trim() || pendingMessage() || input.disabled) return;
       input.value = '';
       submit(text);
     });
@@ -579,13 +809,24 @@
           render();
         }
       },
+      // What the adapter said the agent may do (its own words) and whether it was improvised.
+      setPermissions: function (text, improvised) {
+        permissionInfo = { text: typeof text === 'string' ? text : '', improvised: !!improvised };
+        render();
+      },
       show: function () {
+        chatShown = true;
         panel.hidden = false;
+        edge.hidden = false;
         document.documentElement.setAttribute('data-teach-chat', 'on');
+        applyLayout();
       },
       hide: function () {
+        chatShown = false;
         panel.hidden = true;
+        edge.hidden = true;
         document.documentElement.setAttribute('data-teach-chat', 'off');
+        applyLayout();
       },
       freshStart: function (generation) {
         var seen = thread.some(function (entry) {
@@ -606,12 +847,16 @@
   // and no permission notice. Retry runs the test again on the server, and success switches this
   // same widget to live chat with no reload. The thread is kept whichever way it goes.
 
+  // The lesson and its quiz are the lesson's own and keep working; only the chat is gone.
+  var DEAD_SERVER_MESSAGE = "The teaching server isn't running. This page is from an earlier session: run /teach for a fresh link. The lesson and quiz still work here.";
+
   function startConnection(token, tab, root) {
     var chat = null;
     var lease = 'unknown';
     var verdict = { state: 'pending' };
     var expanded = false;
     var retryProblem = '';
+    var dead = false;
 
     var gate = element('div', 'teach-pill');
     var toggle = element('button', 'teach-pill-toggle');
@@ -632,6 +877,17 @@
     }
 
     function renderGate() {
+      if (dead) {
+        gate.hidden = false;
+        gate.setAttribute('data-state', 'dead');
+        detail.textContent = '';
+        toggle.textContent = 'Teaching server not running';
+        toggle.disabled = false;
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        detail.hidden = !expanded;
+        detail.appendChild(element('p', null, DEAD_SERVER_MESSAGE));
+        return;
+      }
       if (verdict.state === 'interactive') {
         gate.hidden = true;
         return;
@@ -667,8 +923,10 @@
       retryProblem = '';
       if (next.state === 'interactive') {
         if (!chat) chat = startChat(token, tab, { takeLease: takeLease, setLease: setLease });
+        chat.setPermissions(next.permissions, next.improvised);
         chat.setLease(lease);
-        chat.show();
+        if (dead) chat.hide();
+        else chat.show();
         if (typeof next.generation === 'number' && next.generation > 1) chat.freshStart(next.generation);
       } else if (chat) {
         chat.hide();
@@ -713,6 +971,21 @@
           return 'Could not reach the teaching server. Run /teach for a fresh link.';
         });
     }
+
+    // The stream says when the server has gone (the message opens by itself: it is all there is to
+    // read) and when it is back, which the state the server then sends puts right.
+    document.addEventListener('teach:stream', function (event) {
+      var gone = event.detail.state === 'lost';
+      if (gone === dead) return;
+      dead = gone;
+      if (gone) {
+        expanded = true;
+        if (chat) chat.hide();
+      } else if (chat && verdict.state === 'interactive') {
+        chat.show();
+      }
+      renderGate();
+    });
 
     // The server sends the current state when the stream opens, and again on every change.
     document.addEventListener('teach:event', function (event) {
@@ -877,7 +1150,7 @@
     // The stream announces the tab, so it waits until the tab knows its id (a copy takes a new one).
     resolveTabId(function (tab) {
       startConnection(token, tab, root);
-      connect(token, tab, 1000);
+      connect(token, tab, 1000, 0);
     });
   }
 

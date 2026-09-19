@@ -304,7 +304,7 @@ function writeState(dir, state) {
   fs.renameSync(temporary, file);
 }
 
-async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs, signalPollMs = 1000, leaseGraceMs }) {
+async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = null, session = null, sendTimeoutMs, resultTtlMs, checkTimeoutMs, primeTimeoutMs, signalPollMs = 1000, leaseGraceMs, permissions, improvised }) {
   const root = fs.realpathSync(workspace);
   const stateDir = path.join(root, STATE_DIR);
   const stateFile = path.join(stateDir, STATE_FILE);
@@ -362,7 +362,7 @@ async function startServer({ workspace, bind, heartbeatMs = 20000, adapter = nul
     return streams.size;
   };
 
-  const handshake = createHandshake({ workspace: root, adapter, session, running, setSession: chat.setSession, broadcast, checkTimeoutMs, primeTimeoutMs });
+  const handshake = createHandshake({ workspace: root, adapter, session, permissions, improvised, running, setSession: chat.setSession, broadcast, checkTimeoutMs, primeTimeoutMs });
   handshake.start();
 
   const signalDrop = createSignalDrop({

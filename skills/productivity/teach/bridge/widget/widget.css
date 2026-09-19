@@ -11,6 +11,9 @@
   --teach-error-bg: #fdecec;
   --teach-error-line: #e0a3a3;
   --teach-error-fg: #7a1c1c;
+  --teach-amber-bg: #fff4d6;
+  --teach-amber-line: #d9a93a;
+  --teach-amber-fg: #5c3d00;
   font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--teach-fg);
 }
@@ -27,6 +30,9 @@
     --teach-error-bg: #3a2020;
     --teach-error-line: #7a3b3b;
     --teach-error-fg: #ffb4b4;
+    --teach-amber-bg: #3a2f10;
+    --teach-amber-line: #8a6d1e;
+    --teach-amber-fg: #ffe3a0;
   }
 }
 
@@ -40,53 +46,210 @@
   display: none;
 }
 
+/* ---- Layout. One widget, two layouts: the script sets data-layout ("wide" from 1000px, else
+   "narrow") and data-open on #teach-widget, and everything below follows those. A narrow screen gets
+   a slim bar along the bottom with the thread in a sheet that slides up; a wide one gets a docked
+   panel on the right that can fold away to an edge tab. ---- */
 .teach-panel {
   position: fixed;
   z-index: 2147483000;
   right: 0;
   bottom: 0;
   left: 0;
-  height: 45vh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  padding: 10px 12px;
+  padding-bottom: env(safe-area-inset-bottom, 0);
   background: var(--teach-bg);
   border-top: 1px solid var(--teach-line);
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
 }
 
-@media (min-width: 1000px) {
-  html[data-teach-chat='on'] body {
-    margin-right: 380px;
-  }
+.teach-head {
+  display: none;
+}
 
-  .teach-panel {
-    top: 0;
-    left: auto;
-    width: 380px;
-    height: auto;
-    border-top: 0;
-    border-left: 1px solid var(--teach-line);
-    box-shadow: none;
+.teach-sheet {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 0;
+  max-height: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  visibility: hidden;
+  transition: max-height 0.2s ease, visibility 0s linear 0.2s;
+}
+
+#teach-widget[data-layout='narrow'][data-open='true'] .teach-sheet {
+  max-height: 60vh;
+  padding-top: 10px;
+  visibility: visible;
+  transition: max-height 0.2s ease;
+}
+
+.teach-bar {
+  box-sizing: border-box;
+  padding: 8px 12px;
+}
+
+.teach-toggle {
+  position: relative;
+  flex: none;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--teach-accent);
+  background: transparent;
+  border: 1px solid var(--teach-line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.teach-toggle[data-unread='true']::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  background: #d64545;
+  border-radius: 50%;
+}
+
+.teach-edge {
+  display: none;
+  position: fixed;
+  z-index: 2147483000;
+  top: 40%;
+  right: 0;
+  padding: 12px 6px;
+  font: 600 13px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #ffffff;
+  background: var(--teach-accent);
+  border: 0;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  writing-mode: vertical-rl;
+}
+
+#teach-widget[data-layout='wide'] .teach-panel {
+  top: 0;
+  left: auto;
+  width: 380px;
+  padding-bottom: 0;
+  border-top: 0;
+  border-left: 1px solid var(--teach-line);
+  box-shadow: none;
+}
+
+#teach-widget[data-layout='wide'] .teach-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 0;
+}
+
+#teach-widget[data-layout='wide'] .teach-sheet {
+  flex: 1;
+  max-height: none;
+  padding-top: 8px;
+  visibility: visible;
+  transition: none;
+}
+
+#teach-widget[data-layout='wide'] .teach-toggle,
+#teach-widget[data-layout='wide'] .teach-status[data-kind='attention'] {
+  display: none;
+}
+
+#teach-widget[data-layout='wide'][data-open='false'] .teach-panel {
+  display: none;
+}
+
+#teach-widget[data-layout='wide'][data-open='false'] .teach-edge {
+  display: block;
+}
+
+/* Make room for the dock, or for the bar, so the lesson is never covered. On the page's root, since a
+   lesson styles its own body margins. */
+html[data-teach-chat='on'][data-teach-dock='open'] {
+  padding-right: 380px;
+}
+
+html[data-teach-bar='on'] {
+  padding-bottom: 96px;
+}
+
+.teach-collapse {
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--teach-muted);
+  background: transparent;
+  border: 1px solid var(--teach-line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.teach-panel :focus-visible,
+.teach-edge:focus-visible {
+  outline: 2px solid var(--teach-accent);
+  outline-offset: 2px;
+}
+
+/* Read out by a screen reader, not seen. */
+.teach-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teach-sheet {
+    transition: none;
   }
 }
 
 .teach-heading {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 15px;
   font-weight: 600;
   color: var(--teach-fg);
 }
 
 .teach-thread {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding-bottom: 8px;
+}
+
+/* Before you start: what the agent session will be allowed to do, in amber, until it is confirmed. */
+.teach-permission {
+  flex: none;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  color: var(--teach-amber-fg);
+  background: var(--teach-amber-bg);
+  border: 1px solid var(--teach-amber-line);
+  border-radius: 8px;
+}
+
+.teach-permission p {
+  margin: 0 0 8px;
+}
+
+.teach-unreviewed {
+  font-weight: 600;
 }
 
 .teach-divider {
@@ -138,9 +301,19 @@
 }
 
 .teach-status {
-  padding: 4px 0 6px;
+  padding: 0 0 6px;
   font-size: 13px;
   color: var(--teach-muted);
+}
+
+.teach-status-button {
+  padding: 2px 10px;
+  font: inherit;
+  color: var(--teach-accent);
+  background: transparent;
+  border: 1px solid var(--teach-line);
+  border-radius: 12px;
+  cursor: pointer;
 }
 
 .teach-thinking {
@@ -183,6 +356,7 @@
 .teach-input {
   flex: 1;
   box-sizing: border-box;
+  min-width: 0;
   min-height: 40px;
   max-height: 120px;
   padding: 6px 8px;

@@ -85,3 +85,29 @@ test('exits with an error when the adapter is not a JSON array of strings', asyn
     assert.match(stderr, /--adapter/, adapter);
   }
 });
+
+test('--improvised true marks the connector, and the interactive state says so', async (t) => {
+  const ws = makeWorkspace({ 'lessons/0001-x.html': '<html><body>x</body></html>' });
+  const adapter = fakeAdapter({
+    check: { type: 'result', ok: true, permissions: 'Reads files.' },
+    prime: { type: 'result', ok: true, session: 'cli-2' },
+  });
+  t.after(() => {
+    adapter.cleanup();
+    ws.cleanup();
+  });
+  const proc = run(['--workspace', ws.dir, '--bind', 'loopback', '--adapter', JSON.stringify(adapter.command), '--improvised', 'true']);
+  t.after(() => proc.child.kill());
+
+  const info = JSON.parse(await proc.firstLine());
+  for (let waited = 0; ; waited += 50) {
+    const state = await (await fetch(`http://127.0.0.1:${info.port}/handshake`, { headers: { 'X-Teach-Token': info.token } })).json();
+    if (state.state === 'interactive') {
+      assert.equal(state.improvised, true);
+      assert.equal(state.permissions, 'Reads files.');
+      break;
+    }
+    assert.ok(waited < 5000, `still ${JSON.stringify(state)}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+});

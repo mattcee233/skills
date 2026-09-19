@@ -11,7 +11,9 @@
 // tried from another terminal (run from that folder):
 //   node .teach/signal.js next-lesson lessons/0002-lists.html "Lists"
 //   node .teach/signal.js reload lessons/0001-loops.html
-//   node tests/dev-server.js connected   starts with a session already given (no handshake)
+//   node tests/dev-server.js connected   starts with a session already given (no handshake), with a
+//                                        permission text so the notice shows
+//   node tests/dev-server.js connected improvised   the same, marked as an AI-written connector
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -43,7 +45,8 @@ async function main() {
     delayMs: { check: 1500, send: 3000 },
   });
   const session = process.argv[2] === 'connected' ? 'dev-session' : null;
-  const server = await startServer({ workspace, bind: { mode: 'loopback' }, adapter: adapter.command, session });
+  const permissions = session ? 'Read and edit files in this workspace, browse the web for research, and run only the signalling command.' : undefined;
+  const server = await startServer({ workspace, bind: { mode: 'loopback' }, adapter: adapter.command, session, permissions, improvised: process.argv[3] === 'improvised' });
 
   const scriptPath = adapter.command[2];
   process.stdout.write(`${JSON.stringify({ workspace, url: `http://127.0.0.1:${server.port}/lessons/0001-loops.html#t=${server.token}`, script: scriptPath })}\n`);

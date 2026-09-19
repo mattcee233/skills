@@ -2,9 +2,10 @@
 'use strict';
 // Starts the workspace server and prints one JSON line, {pid, port, token, addresses}, for
 // the skill to build the lesson URL from. Runs until it is stopped.
-//   node serve.js --workspace <dir> --bind loopback|network [--address <ip>] [--adapter <json>]
+//   node serve.js --workspace <dir> --bind loopback|network [--address <ip>] [--adapter <json>] [--improvised true]
 // --adapter is the adapter's command as a JSON array of strings; the server then runs the
-// start-of-session handshake with it.
+// start-of-session handshake with it. --improvised true marks the connector as AI-written and
+// unreviewed, which the widget's permission notice says.
 const fs = require('node:fs');
 const { startServer } = require('./server');
 
@@ -40,6 +41,7 @@ async function main() {
     workspace: args.workspace,
     bind: { mode: args.bind, address: args.address },
     adapter: args.adapter === undefined ? null : parseAdapter(args.adapter),
+    improvised: args.improvised === 'true',
   });
   process.stdout.write(`${JSON.stringify({ pid: process.pid, port: server.port, token: server.token, addresses: server.addresses })}\n`);
 

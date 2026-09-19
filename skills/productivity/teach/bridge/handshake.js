@@ -110,14 +110,18 @@ function parseFor(op) {
 
 // Before it has run, a handshake is pending. Without an adapter there is nothing to test, and a
 // session identity given up front (tests, the dev harness) counts as already connected.
-function initialState(adapter, session) {
+function initialState(adapter, session, given) {
   if (!adapter) return { state: 'static', generation: 0, reason: 'no-adapter', message: 'No connector is set up for this workspace.' };
-  if (session) return { state: 'interactive', generation: 1 };
+  if (session) return { state: 'interactive', generation: 1, ...given };
   return { state: 'pending', generation: 0 };
 }
 
-function createHandshake({ workspace, adapter, session = null, running, setSession, broadcast, checkTimeoutMs = CHECK_TIMEOUT_MS, primeTimeoutMs = PRIME_TIMEOUT_MS }) {
-  let state = initialState(adapter, session);
+// `permissions` and `improvised` are what the widget's permission notice shows besides the adapter's
+// own text: an improvised connector is AI-written and unreviewed, and the notice says so. They are
+// only given up front for a session that skips the handshake (tests and the dev harness).
+function createHandshake({ workspace, adapter, session = null, permissions, improvised = false, running, setSession, broadcast, checkTimeoutMs = CHECK_TIMEOUT_MS, primeTimeoutMs = PRIME_TIMEOUT_MS }) {
+  const marks = improvised ? { improvised: true } : {};
+  let state = initialState(adapter, session, { ...(permissions ? { permissions } : {}), ...marks });
 
   function publish(next) {
     state = next;
@@ -151,7 +155,7 @@ function createHandshake({ workspace, adapter, session = null, running, setSessi
     if (primed.invalid) return refuse(MALFORMED_HINT);
     if (!primed.ok) return unavailable(primed.error);
     setSession(primed.session);
-    return publish({ state: 'interactive', generation: state.generation + 1, permissions: checked.permissions });
+    return publish({ state: 'interactive', generation: state.generation + 1, permissions: checked.permissions, ...marks });
   }
 
   async function run() {
