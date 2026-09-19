@@ -4,6 +4,8 @@
 
 It does not teach from what the [model](https://www.aihero.dev/ai-coding-dictionary/model) already knows. [Parametric knowledge](https://www.aihero.dev/ai-coding-dictionary/parametric-knowledge) is treated as untrusted: before it teaches, it goes and finds high-trust resources, records them in `RESOURCES.md`, and cites them inside every lesson. The other structural fact is that it is [stateful](https://www.aihero.dev/ai-coding-dictionary/stateful): the mission, the resources, the lessons and the record of what you have learned all live in the directory as files, so the next session picks up from those files rather than from whatever is left of the last conversation.
 
+Lessons can also be interactive. If you opt in, `teach` serves the lessons from a small local server and adds an "ask the teacher" panel to each page, so you can ask a question, request a change to the lesson, or ask for the next one without leaving the browser tab. Interactive mode is optional, and every lesson file is the same plain HTML with or without it.
+
 ## When to reach for it
 
 You invoke this by typing `/teach`; the [agent](https://www.aihero.dev/ai-coding-dictionary/agent) won't reach for it on its own.
@@ -34,6 +36,10 @@ What accumulates in that directory:
 | `learning-records/*.md` | ADR-style notes on what you have demonstrably learned, used to decide what to teach next |
 | `assets/*` | Reusable components, starting with a shared stylesheet, so the lessons look like one course |
 | `NOTES.md` | Your stated teaching preferences |
+| `.teach/*` | Interactive mode only. Machine-local settings, the launcher the agent signals with, and any connector the agent wrote. It ignores itself, so none of it is ever committed |
+| `AGENTS.md` | Interactive mode only. A marked "Teaching signals" block telling the agent how to signal the open page. `CLAUDE.md` gets an `@AGENTS.md` import |
+
+Interactive mode needs Node 18 or later, checked when you opt in, and the command-line tool of the harness you are using: `claude` for Claude Code, `agy` for Antigravity, `pi` for pi and Pithagoras. Without either, you still get the lessons as plain files.
 
 Two honest notes on that list. A glossary suits most topics, but the skill ships a `GLOSSARY-FORMAT.md` that `SKILL.md` no longer links to, so you will only get one if you ask ([issue #559](https://github.com/mattpocock/skills/issues/559)). And the workspace is not always created where you expect, so see the first question below before you build a long course on top of it.
 
@@ -52,6 +58,28 @@ A **lesson** is one self-contained HTML file, short enough to finish in a sittin
 The split worth knowing: lessons are rarely revisited, reference documents are. So the compressed essence of a lesson (the syntax table, the algorithm, the pose sequence, the glossary) belongs in `reference/`, not buried in the lesson that introduced it.
 
 Lessons are built from **components** in `assets/`: stylesheets, quiz widgets, simulators, diagram helpers. Reuse is the default. The agent reads `assets/` before authoring a lesson and builds from what is there, and anything new that a second lesson could use is written as a component rather than inlined. The shared stylesheet is the first component every workspace earns; it is what stops the output being a pile of one-offs.
+
+## Interactive lessons
+
+The first time you use `teach` in a workspace, it runs the mission interview and then asks one plain yes or no: do you want interactive mode? On yes, it does a one-time setup. On no, it skips every technical step and leaves you with plain lesson files, and it stays quiet about interactive mode from then on. Type `/teach interactive` whenever you change your mind: it clears the recorded answer and tries the whole connection again.
+
+Every `/teach` in an interactive workspace starts a fresh server on a random port and replies with one link that opens the current lesson. The link carries a per-session token after the `#`, which the page strips from the address bar, so give the link to nobody else. In the same reply it says whether chat is ready, why it is not, or that it is still connecting.
+
+**The three tiers.** How far it gets depends on what your machine and your login can do, and you always end up in one of these:
+
+| Tier | What you get | Why you would be here |
+| --- | --- | --- |
+| 1. Interactive | The lesson page with a live chat panel | Everything works |
+| 2. Served, chat not connected | The same pages, and a small "Chat not connected" pill with the reason, the fix and a Retry button | The CLI is missing, the login has lapsed, or the connection test failed |
+| 3. Plain files | Lessons as files you open yourself, exactly as before | You said no, or Node is missing or older than 18 |
+
+**Asking the teacher.** Your words go to the agent unchanged, with one added line saying which lesson you sent them from, so "make this simpler" has something to point at. The agent can revise the current lesson, write the next one, update your learning records and research a tangent. When it does, the page updates in place: the next-lesson button appears or moves, and a revised lesson reloads under you with your quiz answers and chat kept. One conversation carries across lessons for the session, and it is gone when the session ends.
+
+**What the agent may do.** Before your first message each session, the panel shows an amber notice of exactly what the connected agent is allowed to do, and the message box stays blocked until you confirm it. For Claude Code the set is fixed and narrow: read and edit files in the workspace, browse for research, and run only the signalling command. Antigravity gets file access and browsing and, unless it has been granted a narrow terminal rule, signals by dropping a file rather than running a command. pi and Pithagoras cannot be narrowed: that agent already runs with its process's full permissions and has no approval prompts, and its notice says so. A connector the agent wrote itself is marked as AI-written and unreviewed.
+
+**"This computer" and "other devices".** You are asked which address to serve on. "This computer" listens on loopback only, and is the default for a desktop harness. "Other devices" listens on loopback plus the one private network address you pick, never on every interface, so a phone or tablet on your network can read the lesson. For Pithagoras "this computer" is not offered at all: the agent runs on a different machine from your browser, so the server is always served on the network. Every request that sends a message needs the token. The chat runs through your own harness's command-line tool under your own login, so keep "other devices" to your own devices.
+
+**Two tabs.** Only one tab has live chat at a time. The other still reads and runs quizzes, and says so, with a "Use this page instead" button to move chat to it.
 
 ## Common questions
 
@@ -79,6 +107,30 @@ No, and the non-coding use is the larger part of the record: Korean, Japanese fo
 **Which model should I run it with?**
 There is no canonical answer, and the reported differences are large. Higher [reasoning effort](https://www.aihero.dev/ai-coding-dictionary/effort) has been reported to produce noticeably better lessons than the medium setting. One user ran the same skill through Copilot CLI with Codex and got a single 30-line HTML card where Claude Code produced a full lesson. It runs unmodified in Claude Cowork, subject to whether your organisation allows skills to be added there. If the lessons come out thin, change model, [harness](https://www.aihero.dev/ai-coding-dictionary/harness) or effort before rewriting your prompt.
 
+**The page says "Chat not connected". What do I do?**
+Read the one line under the pill: it names the problem and the fix, written for your harness. Then press Retry, or type "check again" in the agent's own window. The common causes:
+
+| The message says | Do this |
+| --- | --- |
+| The CLI is not installed | Run the install steps the agent shows you for your operating system, then Retry. If it still cannot find it, restart the app you are running the agent in: an app started before the install has an old PATH |
+| It is not logged in | Log in yourself: `claude auth login` (or `/login` inside Claude Code), or start `agy` and run `/login`, or run `pi` and use `/login`. Then Retry |
+| The usage limit is reached | Your allowance for that harness has run out. Wait for it to renew, then press Try again |
+| The connection test failed its safety check | The connector did something it must not do, so chat stays off. `/teach interactive` starts again from scratch |
+
+The agent shows install and login steps but never runs an installer and never touches your credentials. If you decline, that is recorded once and it will not nag.
+
+**Will it work with my harness?**
+Claude Code, Antigravity and pi/Pithagoras are supported. For any other harness, the agent asks whether to write a connector, but only if it can name a documented non-interactive way to reach itself; otherwise you get the pages without chat. It never borrows another harness's CLI, so your Claude Code login is not used from an Antigravity session or the reverse.
+
+**My question got no answer, or the page said something timed out.**
+A slow answer is normal: the panel shows a spinner with the elapsed time and a reminder after about 25 seconds and again after about a minute. If it does time out, press Try again. It never resends your question on its own. If you reload while the agent is working, the reply still arrives.
+
+**The link stopped working, or the panel says the server is not running.**
+Each `/teach` starts a fresh server and the old one is stopped, so a link from an earlier session is dead. Run `/teach` again for a new link. Your chat history does not carry over, because it lives only for that session.
+
+**Do I have to use it?**
+No. Nothing in interactive mode is needed for the lessons themselves. A lesson opened later as a plain file is clean and complete, and its follow-up line ("ask in the chat panel if you see one, or ask me in this conversation") is true either way.
+
 ## It's working if
 
 - The first thing it does in an empty directory is interview you about why you want this, rather than produce a lesson.
@@ -89,6 +141,11 @@ There is no canonical answer, and the reported differences are large. Higher [re
 - `learning-records/` grows, and lessons stop re-teaching what you have already demonstrated.
 - The lessons look like one course: they link the stylesheet in `assets/` rather than each carrying its own.
 - A question that needs judgement gets you pointed at a forum, subreddit or class, not just an answer.
+- In an interactive workspace, `/teach` replies with one link and, in the same message, "chat is ready", a one-line reason and fix, or "still connecting".
+- The page opens at once and shows "Connecting..." rather than waiting on the agent.
+- Before your first message you see what the agent may do, and you have to confirm it.
+- Asking for the next lesson makes the next-lesson button appear on the page you are reading, without moving you.
+- Reloading the page keeps your quiz answers and the chat thread.
 
 ## Where it fits
 
