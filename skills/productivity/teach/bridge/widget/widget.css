@@ -259,6 +259,12 @@ html[data-teach-bar='on'] {
   color: var(--teach-muted);
 }
 
+.teach-label {
+  align-self: flex-end;
+  font-size: 12px;
+  color: var(--teach-muted);
+}
+
 .teach-message {
   max-width: 92%;
   padding: 7px 10px;
@@ -554,3 +560,15 @@ a.teach-next {
   }
 }
 
+/* Free-text questions in a lesson: the lesson supplies the button and the hidden model answer. */
+[data-quiz-type="freetext"] textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 6em;
+  font: inherit;
+}
+
+[data-quiz-type="freetext"] [data-quiz-answer][hidden] {
+  display: none;
+}

@@ -19,6 +19,28 @@ A quiz question requires only standard HTML elements with a few data attributes:
 </div>
 ```
 
+## Free-Text Questions
+
+Some questions have no fixed answer: "in your own words, why...". A free-text question is a quiz question like the others: the same `.quiz-q` container inside `section.quiz`, the same `data-quiz-question` id, the same Check-style button and feedback line. It is marked `data-quiz-type="freetext"`, holds a `<textarea>` in place of the radio options, and keeps a model answer in a hidden `[data-quiz-answer]` element:
+
+```html
+<div class="quiz-q" data-quiz-question="f1" data-quiz-type="freetext">
+  <p>In your own words, what does a loop do, and when would you stop it?</p>
+  <textarea name="f1" rows="4"></textarea>
+  <button type="button" data-quiz-check>Show model answer</button>
+  <p class="fb" data-quiz-feedback></p>
+  <div data-quiz-answer hidden>A loop repeats work until a condition stops it. You stop it when ...</div>
+</div>
+```
+
+What the button does depends on whether chat is live:
+
+- **Interactive, chat connected:** the learner's words are sent to the teacher instead, as an answer to grade, and the model answer stays hidden. The teacher's comments appear in the chat panel. The feedback line says the answer was sent.
+- **Otherwise** (chat not connected, or a lesson served without it): the button reveals the model answer, so the learner can compare their own answer with it.
+- **An empty box** is never sent and never reveals the model answer: the learner has to try first.
+
+The widget saves what the learner types under the question's id (`{ text, sent, revealed }`), and restores it on reload and through a lesson revision, so keep the id stable (letters, digits, `-` and `_`, up to 64). There is no `data-correct` on a free-text question, and the model answer belongs only in `[data-quiz-answer]`: never in the text around the question.
+
 ## Never Reveal Answers
 
 Mark the correct choice only with the attributes below. Never state, hint at or confirm an answer in the lesson text, in a chat reply, in the summary of a revision ("the answer is still X"), or when writing another lesson. If a revision changes a question or its options, say only that it changed. Feedback appears after the learner presses Check.

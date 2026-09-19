@@ -91,3 +91,28 @@ test('SKILL.md and QUIZ-FORMAT.md carry the same rule for the /teach agent', () 
     assert.match(text, /never (state|reveal|give away)[^.]*answer/i, `${file} says never to reveal an answer`);
   }
 });
+
+test('the block tells the chat agent what a free-text answer looks like and how to handle it', () => {
+  const block = teachingSignalsBlock();
+  assert.match(block, /\[user answer to freetext question/);
+  assert.match(block, /grade/i);
+  assert.match(block, /comment/i);
+  // Grading one answer must not become a way to leak the others.
+  assert.match(block, /other quiz questions|any other quiz/i);
+});
+
+test('QUIZ-FORMAT.md and LESSON-FORMAT.md show the free-text markup the widget reads', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const file of ['QUIZ-FORMAT.md', 'LESSON-FORMAT.md']) {
+    const text = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    assert.match(text, /data-quiz-type="freetext"/, file + ' names the marker');
+    assert.match(text, /<textarea/, file + ' shows the textarea');
+    assert.match(text, /data-quiz-answer/, file + ' shows the hidden model answer');
+  }
+  const quizFormat = fs.readFileSync(path.join(__dirname, '..', 'QUIZ-FORMAT.md'), 'utf8');
+  assert.match(quizFormat, /class="quiz-q" data-quiz-question="f1" data-quiz-type="freetext"/, 'it is a quiz-q like the others');
+  assert.match(quizFormat, /data-quiz-check/, 'the lesson supplies the button');
+  assert.doesNotMatch(quizFormat, /data-quiz-send/, 'there is no separate send button');
+  assert.match(quizFormat, /sent to the teacher instead/i, 'says what the button does with chat live');
+});

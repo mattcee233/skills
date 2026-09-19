@@ -10,6 +10,9 @@ const MAX_NOTE_LENGTH = 300;
 // Errors that mean the engine cannot be used until the learner fixes something.
 const SETUP_CODES = new Set(['missing', 'not-logged-in', 'unauthorised']);
 const QUEUE_CAP = 3;
+// What a page may say a message is. The server, never the page, writes the line that goes before
+// the learner's words, so a kind is a name from this closed set and nothing more.
+const KINDS = new Set(['answer']);
 const SEND_TIMEOUT_MS = 16 * 60 * 1000;
 const RESULT_TTL_MS = 60 * 60 * 1000;
 const MAX_OUTPUT_LENGTH = 2 * 1024 * 1024;
@@ -134,6 +137,16 @@ function runAdapter({ command, cwd, request, timeoutMs, running, parse = readRes
   });
 }
 
+// The one factual line before the learner's words. An ordinary message says which page it came from.
+// An answer to a free-text question says so and asks for a grade and a comment; the question id has
+// already been checked to be plain.
+function framing(kind, lesson, question) {
+  if (kind === 'answer') {
+    return `[user answer to freetext question${question ? ` ${question}` : ''} in ${lesson}, please grade and comment]`;
+  }
+  return `[sent from ${lesson}]`;
+}
+
 // resolveLesson turns the page's path into the workspace-relative lesson file, or null.
 function createChat({
   workspace,
@@ -153,7 +166,7 @@ function createChat({
   const queues = new Map();
 
   // Never throws: whatever goes wrong becomes the message's result, so a queue cannot stall.
-  async function run(id, identity, lesson, text) {
+  async function run(id, identity, lesson, text, kind, question) {
     let result;
     try {
       // A message that was waiting when its conversation ended (the engine became unavailable, or
@@ -164,7 +177,7 @@ function createChat({
             cwd: workspace,
             timeoutMs: sendTimeoutMs,
             running,
-            request: { op: 'send', session: identity, lesson, text: `[sent from ${lesson}]\n${text}` },
+            request: { op: 'send', session: identity, lesson, text: `${framing(kind, lesson, question)}\n${text}` },
           })
         : failure('failed', 'Chat is not connected yet.');
     } catch {
@@ -189,7 +202,9 @@ function createChat({
       const valid =
         typeof body.id === 'string' && ID_PATTERN.test(body.id) &&
         typeof body.text === 'string' && body.text.length > 0 && body.text.length <= MAX_TEXT_LENGTH &&
-        lesson;
+        lesson &&
+        (body.kind === undefined || (typeof body.kind === 'string' && KINDS.has(body.kind))) &&
+        (body.question === undefined || (body.kind === 'answer' && typeof body.question === 'string' && ID_PATTERN.test(body.question)));
       if (!valid) return { status: 400, body: failure('failed', 'That message could not be sent.') };
       dropExpired();
       // A message id that is already known is never run twice.
@@ -204,7 +219,7 @@ function createChat({
       queues.set(identity, queue);
       messages.set(body.id, { status: 'pending' });
       queue.tail = queue.tail
-        .then(() => run(body.id, identity, lesson, body.text))
+        .then(() => run(body.id, identity, lesson, body.text, body.kind, body.question))
         .finally(() => {
           queue.outstanding -= 1;
           if (queue.outstanding === 0) queues.delete(identity);

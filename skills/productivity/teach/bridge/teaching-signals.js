@@ -26,6 +26,8 @@ Use \`"event": "reload"\` (no title needed) for a lesson you changed. The server
 
 **Never give away a quiz answer.** Do not state, hint at or confirm the answer to any quiz question on a page: not in your chat reply, not in the lesson text around the question, not when you revise a lesson ("the answer is still X", or a summary of what changed that names the right option), and not when you write the next lesson. If a revision changes a question or its options, say only that it changed. The page shows feedback when the learner presses Check; if they ask you for the answer, help them reason towards it instead.
 
+**Grading a free-text answer.** A message that starts with \`[user answer to freetext question ...]\` is the learner's own answer to a free-text question on a page, sent for you to grade. Read it against the model answer in that question's \`[data-quiz-answer]\` element in the lesson file. Grade it and comment on it: say what is right and what is missing, and ask a follow-up if that helps them get further. Reply in chat only, without changing the lesson. Do not paste the model answer word for word, and never reveal the answer to any other quiz question on the page. If the answer shows a misconception worth remembering, add a learning record.
+
 **If \`.teach/signal.js\` is missing, do not signal at all.** Interactive teaching has not been set up in this copy of the workspace (or the workspace was cloned to a new machine), so no page is listening. Write the lesson as usual and mention that the learner can run \`/teach interactive\` to set it up.`;
 
 const BLOCK = `${BLOCK_START}\n${BLOCK_BODY}\n${BLOCK_END}\n`;

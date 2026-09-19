@@ -135,6 +135,8 @@ Each of these should be based on a **feedback loop**, where the user receives fe
 
 For quizzes, each answer should be exactly the same number of words (and characters, if possible). Don't give the user any clues about the answer through formatting.
 
+A question with no single right answer can be a free-text question: a text box the learner writes in, marked as in [QUIZ-FORMAT.md](./QUIZ-FORMAT.md#free-text-questions), with a model answer kept hidden in the lesson. Use one where explaining in their own words is the retrieval practice. In an interactive lesson the button sends the learner's words to you to grade instead of revealing the model answer, so expect a message that starts `[user answer to freetext question ...]`: read it against the model answer, say what is right and what is missing, and do not paste the model answer or reveal any other quiz answer.
+
 Never state the answer to a quiz question anywhere the learner can read it before they have tried: not in the lesson text before or after the question, not in a chat reply, not when you revise a lesson (no "the answer is still X", and no summary of the change that names the right option), and not when you write the next lesson or another lesson's quiz. If a revision changes a question or its options, say only that it changed. If the learner asks for the answer, help them reason towards it instead. The answer is marked only in the quiz markup, and the page reveals feedback after the learner presses Check.
 
 ## Acquiring Wisdom

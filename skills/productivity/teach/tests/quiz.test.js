@@ -602,3 +602,171 @@ test('gracefully degrades when localStorage throws errors (e.g. security block o
   assert.equal(q1.querySelector('[data-quiz-feedback]').textContent, 'Correct.');
 });
 
+
+// ---- Free-text questions ---------------------------------------------------------------------
+// A free-text question is a quiz question like the others (see QUIZ-FORMAT.md): a .quiz-q inside
+// section.quiz with the lesson's own button, the feedback line, and a hidden model answer. With chat
+// live the button sends the learner's words to the teacher; without it, it reveals the model answer.
+
+const FREETEXT_HTML = `
+<main>
+  <section class="quiz">
+    <h2>Check your understanding</h2>
+    <div class="quiz-q" data-quiz-question="f1" data-quiz-type="freetext">
+      <p>In your own words, what does a loop do?</p>
+      <textarea name="f1"></textarea>
+      <button type="button" data-quiz-check>Show model answer</button>
+      <p class="fb" data-quiz-feedback></p>
+      <div data-quiz-answer hidden>A loop repeats work until a condition stops it.</div>
+    </div>
+  </section>
+</main>
+`;
+const STORE_KEY = 'teach.quiz:/lessons/0001-loops.html';
+
+// A page as the learner meets it. `answerWith` stands in for the chat panel's reply to an answer being
+// sent; null means no chat panel is listening at all.
+function freetextPage(answerWith, html = FREETEXT_HTML) {
+  const dom = createDomEnvironment({ pathname: '/lessons/0001-loops.html', html });
+  loadWidget(dom);
+  const sent = [];
+  dom.document.addEventListener('teach:send-answer', (event) => {
+    sent.push({ id: event.detail.id, text: event.detail.text });
+    if (answerWith) event.detail.respond(answerWith);
+  });
+  const box = dom.document.querySelector('[data-quiz-question="f1"]');
+  const field = box.querySelector('textarea');
+  const answer = box.querySelector('[data-quiz-answer]');
+  const type = (text) => {
+    field.value = text;
+    dom.document.dispatchEvent({ type: 'input', target: field });
+  };
+  const stored = () => JSON.parse(dom.localStorage.getItem(STORE_KEY) || '{}').f1;
+  const statusText = () => box.querySelector('[data-quiz-feedback]').textContent;
+  const press = () => dom.document.dispatchEvent({ type: 'click', target: box.querySelector('[data-quiz-check]') });
+  const revealed = () => !answer.hasAttribute('hidden');
+  return { dom, box, field, answer, type, stored, statusText, press, revealed, sent };
+}
+
+test('the lesson supplies the button and the model answer; the widget adds neither', () => {
+  const { box } = freetextPage();
+  assert.equal(box.querySelectorAll('button').length, 1, 'only the lesson button');
+  assert.equal(box.querySelectorAll('[data-quiz-send]').length, 0);
+});
+
+test('with chat live, the button sends the words to the teacher and the model answer stays hidden', () => {
+  const page = freetextPage('sent');
+  page.type('A loop repeats work.');
+  page.press();
+  assert.deepEqual(page.sent, [{ id: 'f1', text: 'A loop repeats work.' }]);
+  assert.equal(page.revealed(), false, 'not revealed');
+  assert.match(page.statusText(), /Sent to your teacher.*chat panel/);
+  assert.deepEqual(page.stored(), { text: 'A loop repeats work.', sent: true, revealed: false });
+});
+
+test('with no chat, the button reveals the model answer and says how to get feedback', () => {
+  const page = freetextPage(null);
+  page.type('A loop repeats work.');
+  page.press();
+  assert.equal(page.revealed(), true);
+  assert.match(page.statusText(), /not connected/i);
+  assert.match(page.statusText(), /conversation with the teacher/i);
+  assert.deepEqual(page.stored(), { text: 'A loop repeats work.', sent: false, revealed: true });
+});
+
+test('chat that is switched off (the panel answers "unavailable") reveals the model answer too', () => {
+  const page = freetextPage('unavailable');
+  page.type('An answer.');
+  page.press();
+  assert.equal(page.revealed(), true);
+});
+
+test('the chat panel can refuse an answer: the reason is shown, nothing is sent and nothing is revealed', () => {
+  const reasons = {
+    notice: /notice/i,
+    busy: /still answering/i,
+    'not-interactive': /another page/i,
+    'too-long': /too long/i,
+  };
+  for (const [reason, pattern] of Object.entries(reasons)) {
+    const page = freetextPage(reason);
+    page.type('An answer.');
+    page.press();
+    assert.match(page.statusText(), pattern, reason);
+    assert.equal(page.revealed(), false, `${reason} does not reveal`);
+    assert.equal(page.stored().sent, false, `${reason} is not sent`);
+  }
+});
+
+test('an empty answer is neither sent nor lets the model answer be revealed', () => {
+  for (const answerWith of ['sent', null]) {
+    const page = freetextPage(answerWith);
+    page.type('   ');
+    page.press();
+    assert.equal(page.sent.length, 0);
+    assert.equal(page.revealed(), false);
+    assert.match(page.statusText(), /Write your answer first/);
+  }
+});
+
+test('typing saves the words for this lesson under the question id', () => {
+  const { type, stored } = freetextPage();
+  type('A loop repeats work.');
+  assert.deepEqual(stored(), { text: 'A loop repeats work.', sent: false, revealed: false });
+});
+
+test('changing a sent answer makes it unsent again and clears the line', () => {
+  const page = freetextPage('sent');
+  page.type('First try.');
+  page.press();
+  page.type('Second try.');
+  assert.deepEqual(page.stored(), { text: 'Second try.', sent: false, revealed: false });
+  assert.equal(page.statusText(), '');
+});
+
+test('reloading restores the words, whether they were sent, and a revealed model answer', () => {
+  const reload = (from) => {
+    const fresh = createDomEnvironment({ pathname: '/lessons/0001-loops.html', html: FREETEXT_HTML });
+    for (const [k, v] of from.dom.localStorage._raw.entries()) fresh.localStorage.setItem(k, v);
+    loadWidget(fresh);
+    const box = fresh.document.querySelector('[data-quiz-question="f1"]');
+    return {
+      words: box.querySelector('textarea').value,
+      status: box.querySelector('[data-quiz-feedback]').textContent,
+      revealed: !box.querySelector('[data-quiz-answer]').hasAttribute('hidden'),
+    };
+  };
+
+  const sentPage = freetextPage('sent');
+  sentPage.type('A loop repeats work.');
+  sentPage.press();
+  const afterSent = reload(sentPage);
+  assert.equal(afterSent.words, 'A loop repeats work.');
+  assert.match(afterSent.status, /Sent to your teacher/);
+  assert.equal(afterSent.revealed, false);
+
+  const revealedPage = freetextPage(null);
+  revealedPage.type('My answer');
+  revealedPage.press();
+  assert.equal(reload(revealedPage).revealed, true);
+});
+
+test('a free-text question and a radio question live together, each behaving as itself', () => {
+  const page = freetextPage('sent', FREETEXT_HTML + SAMPLE_QUIZ_HTML);
+  const q1 = page.dom.document.querySelector('[data-quiz-question="q1"]');
+  page.dom.document.dispatchEvent({ type: 'click', target: q1.querySelector('[data-quiz-check]') });
+  assert.equal(q1.querySelector('[data-quiz-feedback]').textContent, 'Pick an answer first.');
+  assert.equal(page.sent.length, 0, 'the radio Check did not send anything');
+
+  page.type('An answer.');
+  page.press();
+  assert.equal(page.sent.length, 1);
+  assert.match(page.statusText(), /Sent to your teacher/, 'the radio quiz did not touch the free-text line');
+});
+
+test('a reload signal keeps a typed free-text answer', () => {
+  const page = freetextPage('sent');
+  page.type('Half written');
+  page.dom.document.dispatchEvent({ type: 'teach:lesson-updated' });
+  assert.equal(page.field.value, 'Half written');
+});

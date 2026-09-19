@@ -5,6 +5,8 @@
   var THREAD_KEY = 'teach.thread';
   var TAB_KEY = 'teach.tab';
   var DUPLICATE_CHECK_MS = 250;
+  // The server refuses a message longer than this (20000 characters).
+  var MAX_ANSWER_LENGTH = 20000;
   var POLL_MS = 1500;
   var POLL_FAILURES_BEFORE_GIVING_UP = 5;
   var HINT_AFTER_SECONDS = [
@@ -510,6 +512,7 @@
             list.appendChild(element('div', 'teach-divider', 'Sent from ' + lessonLabel(entry.lesson, entry.title)));
             lastLesson = entry.lesson;
           }
+          if (entry.answer) list.appendChild(element('div', 'teach-label', 'Your answer to a free-text question'));
           list.appendChild(element('div', 'teach-message teach-you', entry.text));
         } else if (entry.kind === 'fresh') {
           list.appendChild(element('div', 'teach-divider', 'Fresh start'));
@@ -718,7 +721,14 @@
       fetch('/send', {
         method: 'POST',
         headers: { 'X-Teach-Token': token, 'X-Teach-Tab': tab, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: message.id, lesson: message.lesson, text: message.text }),
+        body: JSON.stringify({
+          id: message.id,
+          lesson: message.lesson,
+          text: message.text,
+          // The server writes the line that tells the teacher this is an answer to grade.
+          kind: message.answer ? 'answer' : undefined,
+          question: message.answer && message.answerTo ? message.answerTo : undefined,
+        }),
       })
         .then(function (response) {
           if (response.status === 202) return poll();
@@ -740,9 +750,15 @@
         .catch(poll);
     }
 
-    function submit(text) {
+    // `answerTo` is given for a learner's answer to a free-text question: the question's id.
+    function submit(text, answerTo) {
       var lesson = currentLesson();
       var message = { kind: 'you', id: newId(), text: text, lesson: lesson.path, title: lesson.title, sentAt: Date.now(), status: 'pending' };
+      if (answerTo !== undefined) {
+        message.answer = true;
+        // Only a plain id can be named to the server; anything else is sent as an answer without one.
+        if (/^[A-Za-z0-9_-]{1,64}$/.test(answerTo)) message.answerTo = answerTo;
+      }
       thread.push(message);
       saveThread(thread);
       render();
@@ -777,6 +793,26 @@
       if (!text.trim() || pendingMessage() || input.disabled) return;
       input.value = '';
       submit(text);
+    });
+
+    // A free-text answer on the page asks to be sent to the teacher for grading. Say what became of it:
+    // the page shows the learner the line for each outcome.
+    document.addEventListener('teach:send-answer', function (event) {
+      var detail = event.detail || {};
+      var respond = typeof detail.respond === 'function' ? detail.respond : function () {};
+      var text = typeof detail.text === 'string' ? detail.text : '';
+      if (!chatShown || lease === 'unknown') return respond('unavailable');
+      if (lease !== 'interactive') return respond('not-interactive');
+      if (needsConfirming()) {
+        // The notice is where the learner must act, so open it.
+        if (!isOpen()) setOpen(true);
+        return respond('notice');
+      }
+      if (pendingMessage()) return respond('busy');
+      if (!text.trim() || text.length > MAX_ANSWER_LENGTH) return respond('too-long');
+      if (!isOpen()) setOpen(true);
+      submit(text, typeof detail.id === 'string' ? detail.id : '');
+      return respond('sent');
     });
 
     // Enter sends; Shift+Enter adds a line.
@@ -1265,11 +1301,131 @@
     }
   }
 
+  // ---- Free-text answers ---------------------------------------------------------------
+  // A free-text question is a quiz question like the others: a .quiz-q with a data-quiz-question id,
+  // marked data-quiz-type="freetext", holding a <textarea> in place of the radios, the lesson's own
+  // button (data-quiz-check) that reveals a model answer, the feedback line, and the model answer
+  // itself in a hidden [data-quiz-answer] element. The learner's words are saved per lesson under the
+  // question's id as { text, sent, revealed }.
+  //
+  // The button does one of two things. When chat is live, the words go to the teacher to be graded and
+  // the model answer stays hidden. Otherwise the model answer is revealed, as it always was.
+  var FREETEXT = '[data-quiz-type="freetext"]';
+  var FREETEXT_LINES = {
+    sent: 'Sent to your teacher. Their comments will appear in the chat panel.',
+    empty: 'Write your answer first.',
+    notice: 'Read the notice in the chat panel first, then press the button again.',
+    busy: 'Your teacher is still answering your last message. Press the button again in a moment.',
+    'not-interactive': 'Another page has the chat. Use "Use this page instead" in the chat panel, then press the button again.',
+    'too-long': 'That answer is too long to send. Shorten it and try again.',
+    unavailable: 'Chat is not connected, so here is a model answer to compare yours with. Paste your answer into your conversation with the teacher for feedback.',
+  };
+
+  function isFreetext(q) {
+    return !!q && q.getAttribute('data-quiz-type') === 'freetext';
+  }
+
+  function freetextBoxes(doc) {
+    return (doc || document).querySelectorAll(FREETEXT);
+  }
+
+  function freetextIdOf(box) {
+    var all = document.querySelectorAll('[data-quiz-question], .quiz-q');
+    return questionIdOf(box, Array.prototype.indexOf.call(all, box));
+  }
+
+  function setFreetextStatus(box, text) {
+    var line = getFeedbackElement(box);
+    line.textContent = text;
+    line.className = 'fb';
+    line.setAttribute('aria-live', 'polite');
+  }
+
+  function showModelAnswer(box, shown) {
+    var answer = box.querySelector('[data-quiz-answer]');
+    if (!answer) return;
+    if (shown) answer.removeAttribute('hidden');
+    else answer.setAttribute('hidden', '');
+  }
+
+  function restoreFreetext(doc) {
+    var storage = loadQuizStorage();
+    Array.prototype.forEach.call(freetextBoxes(doc), function (box) {
+      var field = box.querySelector('textarea');
+      var state = storage[freetextIdOf(box)];
+      if (!field || !state || typeof state.text !== 'string') return;
+      field.value = state.text;
+      showModelAnswer(box, !!state.revealed);
+      setFreetextStatus(box, state.revealed ? '' : state.sent ? FREETEXT_LINES.sent : '');
+    });
+  }
+
+  function saveFreetext(box, changes) {
+    var storage = loadQuizStorage();
+    var id = freetextIdOf(box);
+    var before = storage[id] || {};
+    storage[id] = {
+      text: changes.text !== undefined ? changes.text : before.text || '',
+      sent: changes.sent !== undefined ? changes.sent : !!before.sent,
+      revealed: changes.revealed !== undefined ? changes.revealed : !!before.revealed,
+    };
+    saveQuizStorage(storage);
+  }
+
+  function startFreetext() {
+    document.addEventListener('input', function (e) {
+      var field = e.target;
+      if (!field || field.tagName !== 'TEXTAREA' || !field.closest) return;
+      var box = field.closest(FREETEXT);
+      if (!box) return;
+      // New words are not what the teacher was sent.
+      saveFreetext(box, { text: field.value, sent: false });
+      setFreetextStatus(box, '');
+    });
+
+    document.addEventListener('click', function (e) {
+      var target = e.target;
+      var button = target && target.closest ? target.closest('[data-quiz-check], [data-check], button') : null;
+      var box = button && button.closest(FREETEXT);
+      var field = box && box.querySelector('textarea');
+      if (!field) return;
+      if (!field.value.trim()) {
+        setFreetextStatus(box, FREETEXT_LINES.empty);
+        return;
+      }
+      var answered = false;
+      var detail = {
+        id: freetextIdOf(box),
+        text: field.value,
+        // The chat panel says what became of the answer. Nothing answering means chat is not there,
+        // and the button reveals the model answer.
+        respond: function (outcome) {
+          if (answered) return;
+          answered = true;
+          if (outcome === 'sent') {
+            saveFreetext(box, { text: field.value, sent: true });
+            setFreetextStatus(box, FREETEXT_LINES.sent);
+          } else if (FREETEXT_LINES[outcome] && outcome !== 'unavailable') {
+            setFreetextStatus(box, FREETEXT_LINES[outcome]);
+          } else {
+            showModelAnswer(box, true);
+            saveFreetext(box, { text: field.value, revealed: true });
+            setFreetextStatus(box, FREETEXT_LINES.unavailable);
+          }
+        },
+      };
+      document.dispatchEvent(new CustomEvent('teach:send-answer', { detail: detail }));
+      if (!answered) detail.respond('unavailable');
+    });
+  }
+
   function restoreQuiz(doc) {
     if (!doc) doc = document;
+    restoreFreetext(doc);
     var storage = loadQuizStorage();
     var questions = doc.querySelectorAll('[data-quiz-question], .quiz-q');
     Array.prototype.forEach.call(questions, function (q, index) {
+      if (isFreetext(q)) return;
       var id = questionIdOf(q, index);
       var state = storage[id];
       if (!state) return;
@@ -1295,6 +1451,7 @@
 
   function startQuizPersistence() {
     restoreQuiz(document);
+    startFreetext();
 
     document.addEventListener('change', function (e) {
       var target = e.target;
@@ -1322,7 +1479,7 @@
       if (btn.closest && btn.closest('#teach-widget')) return;
 
       var q = findQuestion(btn);
-      if (!q) return;
+      if (!q || isFreetext(q)) return;
 
       var allQuestions = document.querySelectorAll('[data-quiz-question], .quiz-q');
       var index = Array.prototype.indexOf.call(allQuestions, q);

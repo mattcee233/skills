@@ -84,6 +84,8 @@ Every `/teach` in an interactive workspace starts a fresh server on a random por
 | pi and Pithagoras | `pi` | Cannot be narrowed: the agent already runs with its process's full permissions and has no approval prompts, and the notice says so. Web research works only if the `pi-web-access` package is installed |
 | Another harness | its own | Whatever the connector the agent wrote allows. The notice marks it as AI-written and unreviewed |
 
+**Free-text questions.** A lesson can ask you to write an answer in your own words. Without chat, the button under the box reveals a model answer to compare with. With chat connected, the same button sends what you wrote to the teacher instead, labelled as your answer, and the teacher grades it and comments in the panel, so the model answer stays hidden until you ask for it. An empty box is never sent. What you typed is saved with the lesson and comes back after a reload.
+
 **"This computer" and "other devices".** You are asked which address to serve on. "This computer" listens on loopback only, and is the default for a desktop harness. "Other devices" listens on loopback plus the one private network address you pick, never on every interface, so a phone or tablet on your network can read the lesson. For Pithagoras "this computer" is not offered at all: the agent runs on a different machine from your browser, so the server is always served on the network. Every request that sends a message needs the token. The chat runs through your own harness's command-line tool under your own login, so keep "other devices" to your own devices.
 
 **Two tabs.** Only one tab has live chat at a time. The other still reads and runs quizzes, and says so, with a "Use this page instead" button to move chat to it.
@@ -150,6 +152,7 @@ Each `/teach` starts a fresh server and the old one is stopped, so a link from a
 - Before your first message you see what the agent may do, and you have to confirm it.
 - Asking for the next lesson makes the next-lesson button appear on the page you are reading, without moving you.
 - Reloading the page keeps your quiz answers and the chat thread.
+- On a free-text question, the button sends your answer to the teacher for comments when chat is connected, and reveals the model answer when it is not.
 - Whether a lesson is new or revised, and whether you asked in the panel or in the conversation, the teacher never tells you a quiz answer before you press Check.
 
 ## Where it fits

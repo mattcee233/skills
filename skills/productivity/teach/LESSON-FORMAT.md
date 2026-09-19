@@ -98,6 +98,7 @@ Quizzes must strictly follow the minimal declarative markup convention documente
 - Correct option: marked with `data-correct` on the `<input type="radio">`.
 - Check button: `[data-quiz-check]` or `<button type="button" data-quiz-check>Check</button>`.
 - Feedback container: `[data-quiz-feedback]` or `<p class="fb" data-quiz-feedback></p>`.
+- Free-text question: a `.quiz-q` with `data-quiz-type="freetext"` holding a `<textarea>` instead of radio options, the usual button and feedback line, and a model answer in a hidden `[data-quiz-answer]` element. Example: `<div class="quiz-q" data-quiz-question="f1" data-quiz-type="freetext"><p>Explain it in your own words.</p><textarea name="f1"></textarea><button type="button" data-quiz-check>Show model answer</button><p class="fb" data-quiz-feedback></p><div data-quiz-answer hidden>...</div></div>`. With chat live the button sends the learner's words to the teacher to grade instead of revealing the model answer; see [QUIZ-FORMAT.md](./QUIZ-FORMAT.md#free-text-questions).
 
 The injected script reads these declarative attributes to handle feedback and save answers in `localStorage`. The lesson requires no custom `<script>` tags, ensuring that in-place updates via `reload` work cleanly.
 
