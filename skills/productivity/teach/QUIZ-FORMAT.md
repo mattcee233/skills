@@ -19,6 +19,10 @@ A quiz question requires only standard HTML elements with a few data attributes:
 </div>
 ```
 
+## Never Reveal Answers
+
+Mark the correct choice only with the attributes below. Never state, hint at or confirm an answer in the lesson text, in a chat reply, in the summary of a revision ("the answer is still X"), or when writing another lesson. If a revision changes a question or its options, say only that it changed. Feedback appears after the learner presses Check.
+
 ## Hook Specification
 
 ### 1. Question Container (`[data-quiz-question]` or `.quiz-q`)

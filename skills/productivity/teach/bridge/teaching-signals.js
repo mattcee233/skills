@@ -24,6 +24,8 @@ The lesson is a path from the workspace root. The title is plain text and become
 
 Use \`"event": "reload"\` (no title needed) for a lesson you changed. The server picks the file up within a couple of seconds and deletes it.
 
+**Never give away a quiz answer.** Do not state, hint at or confirm the answer to any quiz question on a page: not in your chat reply, not in the lesson text around the question, not when you revise a lesson ("the answer is still X", or a summary of what changed that names the right option), and not when you write the next lesson. If a revision changes a question or its options, say only that it changed. The page shows feedback when the learner presses Check; if they ask you for the answer, help them reason towards it instead.
+
 **If \`.teach/signal.js\` is missing, do not signal at all.** Interactive teaching has not been set up in this copy of the workspace (or the workspace was cloned to a new machine), so no page is listening. Write the lesson as usual and mention that the learner can run \`/teach interactive\` to set it up.`;
 
 const BLOCK = `${BLOCK_START}\n${BLOCK_BODY}\n${BLOCK_END}\n`;

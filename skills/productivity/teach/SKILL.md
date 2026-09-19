@@ -134,6 +134,8 @@ Each of these should be based on a **feedback loop**, where the user receives fe
 
 For quizzes, each answer should be exactly the same number of words (and characters, if possible). Don't give the user any clues about the answer through formatting.
 
+Never state the answer to a quiz question anywhere the learner can read it before they have tried: not in the lesson text before or after the question, not in a chat reply, not when you revise a lesson (no "the answer is still X", and no summary of the change that names the right option), and not when you write the next lesson or another lesson's quiz. If a revision changes a question or its options, say only that it changed. If the learner asks for the answer, help them reason towards it instead. The answer is marked only in the quiz markup, and the page reveals feedback after the learner presses Check.
+
 ## Acquiring Wisdom
 
 Wisdom comes from true real-world interaction - testing your skills outside the learning environment.

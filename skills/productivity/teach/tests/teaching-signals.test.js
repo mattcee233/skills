@@ -74,3 +74,20 @@ test('a start marker with no end marker is not replaced blindly: the block is ad
   assert.ok(result.includes('something the learner wrote'));
   assert.ok(result.includes(teachingSignalsBlock()));
 });
+
+test('the block tells the chat agent never to reveal a quiz answer', () => {
+  const block = teachingSignalsBlock();
+  assert.match(block, /never (state|reveal|give away)[^.]*answer/i);
+  // The cases that leak in practice: a revision summary, a new lesson, the surrounding text.
+  assert.match(block, /revis/i);
+  assert.match(block, /chat reply|your reply/i);
+});
+
+test('SKILL.md and QUIZ-FORMAT.md carry the same rule for the /teach agent', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const file of ['SKILL.md', 'QUIZ-FORMAT.md']) {
+    const text = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    assert.match(text, /never (state|reveal|give away)[^.]*answer/i, `${file} says never to reveal an answer`);
+  }
+});

@@ -150,6 +150,7 @@ Each `/teach` starts a fresh server and the old one is stopped, so a link from a
 - Before your first message you see what the agent may do, and you have to confirm it.
 - Asking for the next lesson makes the next-lesson button appear on the page you are reading, without moving you.
 - Reloading the page keeps your quiz answers and the chat thread.
+- Whether a lesson is new or revised, and whether you asked in the panel or in the conversation, the teacher never tells you a quiz answer before you press Check.
 
 ## Where it fits
 
