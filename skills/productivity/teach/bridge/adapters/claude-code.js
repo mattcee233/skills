@@ -4,11 +4,10 @@
 // Implements check, prime and send according to the adapter contract:
 // reads one JSON request on stdin, writes one JSON line on stdout.
 //   node claude-code.js [--cli <path-or-json-array>]
-const os = require('node:os');
-const path = require('node:path');
-const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { isUsageLimit, usageLimitFailure } = require('./usage-limit');
+const { locateCli } = require('../discovery');
 
 const CLAUDE_PERMISSIONS =
   'File reading and editing in the workspace, browser for research, and terminal limited to the signalling command.';
@@ -66,12 +65,9 @@ function resolveCli(options) {
     }
     return [val];
   }
-  const isWindows = process.platform === 'win32';
-  const candidate = isWindows
-    ? path.join(os.homedir(), '.local', 'bin', 'claude.exe')
-    : path.join(os.homedir(), '.local', 'bin', 'claude');
-  if (fs.existsSync(candidate)) return [candidate];
-  return ['claude'];
+  // On PATH or in a known install folder; null when the CLI is not installed.
+  const located = locateCli({ cli: 'claude' });
+  return located ? located.command : null;
 }
 
 function failure(code) {
@@ -87,6 +83,7 @@ function failure(code) {
 }
 
 function classifyError(code, stdout = '', stderr = '') {
+  if (isUsageLimit(stdout, stderr)) return usageLimitFailure('Claude Code', 'Claude usage allowance');
   const combined = `${stdout} ${stderr}`.toLowerCase();
   if (combined.includes('401') || combined.includes('unauthorized') || combined.includes('unauthorised') || combined.includes('invalid api key')) {
     return failure('unauthorised');
@@ -310,6 +307,7 @@ async function handleRequest(request, options = {}) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') {
     return failure('failed');
   }
+  if (!cli) return failure('missing');
 
   if (request.op === 'check') {
     return handleCheck(cli, cwd, options);

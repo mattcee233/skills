@@ -9,11 +9,10 @@
 // straight back to the agent, so every turn appends WEB_SEARCH_INSTRUCTION, which tells the
 // agent to pass `workflow: "none"` on each web_search call. The learner's global
 // ~/.pi/web-search.json is never read or written.
-const os = require('node:os');
-const path = require('node:path');
-const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { isUsageLimit, usageLimitFailure } = require('./usage-limit');
+const { locateCli, shimCommand, spawnable } = require('../discovery');
 
 const WEB_ACCESS_PACKAGE = 'pi-web-access';
 
@@ -71,56 +70,13 @@ function parseArgs(argv) {
   return options;
 }
 
-// On Windows npm installs `pi` as a `.cmd` shim, which Node cannot spawn without a shell (and a
-// shell would put learner text through cmd.exe quoting). Read the shim for the script it runs
-// and run that with Node directly. Returns null when the file is not such a shim.
-function shimCommand(shimPath) {
-  let source;
-  try {
-    source = fs.readFileSync(shimPath, 'utf8');
-  } catch {
-    return null;
-  }
-  const match = source.match(/"%dp0%[\\/]+([^"]+?\.m?js)"/i);
-  if (!match) return null;
-  const script = path.join(path.dirname(shimPath), match[1]);
-  return fs.existsSync(script) ? [process.execPath, script] : null;
-}
-
-function findOnPath(name) {
-  const dirs = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean);
-  for (const dir of dirs) {
-    const candidate = path.join(dir, name);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-// Turn a resolved command into one that spawns without a shell.
-function spawnable(cli) {
-  if (process.platform !== 'win32' || cli.length !== 1) return cli;
-  let shim = null;
-  if (/\.(cmd|bat)$/i.test(cli[0])) shim = cli[0];
-  else if (!/[\\/]/.test(cli[0])) shim = findOnPath(`${cli[0]}.cmd`);
-  return (shim && shimCommand(shim)) || cli;
-}
-
 function resolveCli(options = {}) {
   if (options.cli && options.cli.length > 0) return spawnable(options.cli);
   const fromEnv = process.env.PI_CLI || process.env.PITHAGORAS_CLI;
   if (fromEnv) return spawnable(parseCliValue(fromEnv));
-  if (process.platform === 'win32') {
-    const roamingAppData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-    const npmShim = path.join(roamingAppData, 'npm', 'pi.cmd');
-    if (fs.existsSync(npmShim)) return spawnable([npmShim]);
-    const localExe = path.join(os.homedir(), '.local', 'bin', 'pi.exe');
-    if (fs.existsSync(localExe)) return [localExe];
-  } else {
-    for (const candidate of [path.join(os.homedir(), '.local', 'bin', 'pi'), '/usr/local/bin/pi']) {
-      if (fs.existsSync(candidate)) return [candidate];
-    }
-  }
-  return spawnable(['pi']);
+  // On PATH or in a known install folder; null when the CLI is not installed.
+  const located = locateCli({ cli: 'pi' });
+  return located ? located.command : null;
 }
 
 function failure(code) {
@@ -138,6 +94,7 @@ function failure(code) {
 // Map pi's own words for a failure onto the closed error set. `not-logged-in` is judged here,
 // from the prime turn, because `pi auth check` needs a provider and local providers have none.
 function classifyError(text = '') {
+  if (isUsageLimit(text)) return usageLimitFailure('The model provider', 'model provider usage allowance');
   const combined = String(text).toLowerCase();
   if (
     combined.includes('no api key') ||
@@ -315,6 +272,7 @@ async function handleRequest(request, options = {}) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') {
     return failure('failed');
   }
+  if (!cli) return failure('missing');
   if (request.op === 'check') return handleCheck(cli, cwd, opts);
   if (request.op === 'prime') return handlePrime(cli, cwd, request, opts);
   if (request.op === 'send') return handleSend(cli, cwd, request, opts);

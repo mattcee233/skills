@@ -8,6 +8,8 @@ const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+const { isUsageLimit, usageLimitFailure } = require('./usage-limit');
+const { locateCli } = require('../discovery');
 
 const PERMISSIONS_FILE_DROP =
   'File reading and editing in the workspace, browser for research, and no terminal access (signalling via file drop).';
@@ -74,20 +76,9 @@ function resolveCli(options = {}) {
     }
     return [val];
   }
-  const isWindows = process.platform === 'win32';
-  if (isWindows) {
-    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    const candidate1 = path.join(localAppData, 'agy', 'bin', 'agy.exe');
-    if (fs.existsSync(candidate1)) return [candidate1];
-    const candidate2 = path.join(os.homedir(), '.local', 'bin', 'agy.exe');
-    if (fs.existsSync(candidate2)) return [candidate2];
-  } else {
-    const candidate1 = path.join(os.homedir(), '.local', 'bin', 'agy');
-    if (fs.existsSync(candidate1)) return [candidate1];
-    const candidate2 = '/usr/local/bin/agy';
-    if (fs.existsSync(candidate2)) return [candidate2];
-  }
-  return ['agy'];
+  // On PATH or in a known install folder; null when the CLI is not installed.
+  const located = locateCli({ cli: 'agy' });
+  return located ? located.command : null;
 }
 
 function resolveSettingsPath(options = {}) {
@@ -153,6 +144,7 @@ function failure(code) {
 }
 
 function classifyError(code, stdout = '', stderr = '') {
+  if (isUsageLimit(stdout, stderr)) return usageLimitFailure('Antigravity CLI (agy)', 'Antigravity usage allowance');
   const combined = `${stdout} ${stderr}`.toLowerCase();
   if (
     combined.includes('401') ||
@@ -456,6 +448,7 @@ async function handleRequest(request, options = {}) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') {
     return failure('failed');
   }
+  if (!cli) return failure('missing');
 
   if (request.op === 'check') {
     return handleCheck(cli, cwd, options);

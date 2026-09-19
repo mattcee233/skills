@@ -68,6 +68,7 @@ Every `/teach` in a workspace set up for interactive mode starts a fresh server 
 2. **Name the harness you are running inside**, meaning the application and not your model, as one of `claude-code`, `antigravity`, `pi`, `pithagoras` or `other`, with a one-line reason naming your evidence. Say `other` when unsure. `pithagoras` means you are running inside a Pithagoras instance: your skills and docs live under its install folder (`/opt/pithagoras`, say) and the learner talks to you from a channel such as Telegram or its web portal. `pi` means you are the plain pi coding agent, in a terminal or its own interface, beside the learner. Both run the pi agent, so the difference is where the learner is, not which agent you are. Run `node <skill>/bridge/session.js detect --harness <id> --reason "<evidence>"`.
    - `resolved: true`: tell the learner the `assumption` line, in one line, then carry on.
    - `conflict: true` or `inconclusive: true` (your answer disagrees with the environment, or you said `other`): ask the `question` and use the learner's answer as the harness id. Never guess.
+   Then check the engine's CLI (for `claude-code`, `antigravity`, `pi` and `pithagoras`) as described in [Missing CLI or Lapsed Login](#missing-cli-or-lapsed-login) before you start the server.
 3. **Find out which address to bind.** Run `node <skill>/bridge/session.js bind --harness <id>`.
    - A `question` is present: ask it. A desktop harness defaults to this computer only. An unrecognised harness has no default. A remote harness (Pithagoras) is never offered this computer only, and with several private addresses the question asks which one.
    - No `question`: use the `bind` it printed and do not ask.
@@ -81,6 +82,21 @@ Every `/teach` in a workspace set up for interactive mode starts a fresh server 
    - Otherwise reply with `reply` exactly: the link on its own line, then the verdict in the same message. The verdict is `chat is ready`, a one-line reason and fix, or `still connecting`. Give the link to the learner only, since its fragment is the token. Do not poll again unless asked. For "check again" run `node .teach/signal.js retry`, and `node .teach/signal.js status` to read the state.
 6. **The outcome is recorded for you** by the command: `ok`, or `login-failed` with the hint. Other failures (`missing`, `unreachable`, a conformance failure, a prime timeout) are not recorded, because the next start checks again.
 7. **An unrecognised harness (`other`)**: follow [IMPROVISED-ADAPTERS.md](./IMPROVISED-ADAPTERS.md). If a connector is kept or written, add `--adapter '<json array>' --improvised true` to step 4. With no connector, start without `--adapter` and the learner gets served static pages.
+
+## Missing CLI or Lapsed Login
+
+The engine behind the chat is the CLI of the harness you are running inside: `claude` for Claude Code, `agy` for Antigravity, `pi` for pi and Pithagoras. Never use another harness's CLI. `<skill>` is the folder that holds this file, resolved again on every invocation.
+
+1. **Assess it.** Run `node <skill>/bridge/discovery.js assess --harness <id>`. It looks on PATH and in the CLI's known install folders (the Windows folders included, since an app started before an install has a stale PATH), confirms with `--version`, and for Claude Code checks the login with `claude auth status` (exit code only). It spends no model turn and prints `{state, usable, line, steps}`. For `agy`, `pi` and Pithagoras there is no free login check, so the connection test's priming turn is the login test.
+2. **Act on `state`.**
+   - `ready`: say nothing and carry on.
+   - `off-path`: the CLI is installed but this app's PATH does not list it yet. Say `line` once and carry on, because it works from its folder.
+   - `missing` or `not-logged-in`: say `line`, then show `steps` in chat for the learner's OS. The learner runs them: you never run an installer and you never handle credentials, so do not ask for a password, key or token, and do not run a login command for them. Ask if they want to do it now.
+   - `not-applicable` (`other`): there is no CLI to look for; follow [IMPROVISED-ADAPTERS.md](./IMPROVISED-ADAPTERS.md).
+   The same applies when a started server's verdict comes back `missing` or `not-logged-in`: run `assess`, then give the learner `line` and `steps`.
+3. **Check again.** When the learner says they have finished (or asks "check again"), run `assess` again. After an install the harness may need a restart to pick up PATH: if it still says `missing`, say so once. When `usable` is true: if a server is running, run `node .teach/signal.js retry`, which re-runs discovery and the connection test, then read `node .teach/signal.js status`; if none is running, carry on from step 4 of Starting a Session.
+4. **Declined or failed.** If the learner does not want to install, run `node <skill>/bridge/discovery.js decline --workspace . --harness <id>`: it records `declined`, and the lessons stay plain files. If the login cannot be fixed, run `node <skill>/bridge/discovery.js login-failed --workspace . --harness <id>`: it records `login-failed` with the login hint, and the page is served with chat not connected. Each prints `recorded`. Say what is missing once, in one line, with how to switch chat on later ("check again" or `/teach interactive`). When `recorded` is `false` it was already recorded: say nothing, and do not repeat it for the rest of the session.
+5. **A used-up usage allowance is not a setup fault.** If the verdict or a chat error says the usage limit is reached, tell the learner in one line that they can try again once their allowance renews. Record nothing: the next start tests again.
 
 ## Re-trying and `/teach interactive`
 
